@@ -15,22 +15,22 @@ cloudinary.config({
 
 export const register = async (req, res) => {
   if (
-    typeof req.body.username === "undefined" ||
+    typeof req.body.email === "undefined" ||
     typeof req.body.password === "undefined" ||
     typeof req.body.confirm === "undefined"
   ) {
     res.status(422).json({ message: "dữ liệu không hợp lệ" });
     return;
   }
-  let { username, password, confirm } = req.body;
+  let { email, password, confirm } = req.body;
   if (password !== confirm) {
     res.status(422).json({ message: "password không trùng hợp" });
     return;
   }
   password = bcrypt.hashSync(password, 10);
   db.query(
-    "SELECT * FROM user WHERE username = ?",
-    [username],
+    "SELECT * FROM user WHERE email = ?",
+    [email],
     (err, result) => {
       if (err) {
         console.log(err);
@@ -38,7 +38,7 @@ export const register = async (req, res) => {
       if (result) {
         let user = result[0];
         if (!!user) {
-          res.status(422).json({ message: "Tài khoản đã tồn tại" });
+          res.status(422).json({ message: "email đã tồn tại" });
           return;
         }
       }
@@ -46,8 +46,8 @@ export const register = async (req, res) => {
   );
   const role = roleAccount.USER;
   db.query(
-    "INSERT INTO user (username, password, role, email) VALUES (?,?,?,?)",
-    [username, password, role, username],
+    "INSERT INTO user (email, password, role) VALUES (?,?,?,?)",
+    [email, password, role],
     (err, result) => {
       if (err) {
         res.status(422).json({ message: "đăng ký thất bại, vui lòng thử lại" });
@@ -60,17 +60,17 @@ export const register = async (req, res) => {
 };
 
 export const login = (req, res) => {
-  const { username, password } = req.body;
+  const { email, password } = req.body;
 
   db.query(
-    "SELECT * FROM user where username = ?",
-    [username],
+    "SELECT * FROM user where email = ?",
+    [email],
     (err, result) => {
       if (err) {
         console.log(err);
       }
       if (result) {
-        const user = { id: result[0]?.id, username: result[0]?.username };
+        const user = { id: result[0]?.id, email: result[0]?.email };
         if (!user.id) {
           res
             .status(422)
@@ -86,7 +86,7 @@ export const login = (req, res) => {
 
         let token = jwt.sign(
           {
-            username: username,
+            email: email,
             role: result.role,
             iat: Math.floor(Date.now() / 1000) - 60 * 30,
           },
@@ -94,7 +94,7 @@ export const login = (req, res) => {
           { expiresIn: "1h" }
         );
         let refreshToken = jwt.sign(
-          { username: username, iat: Math.floor(Date.now() / 1000) - 60 * 30 },
+          { email: email, iat: Math.floor(Date.now() / 1000) - 60 * 30 },
           "re-secret",
           { expiresIn: "10 days" }
         );
@@ -148,7 +148,7 @@ export const profile = (req, res) => {
       "SELECT * FROM user WHERE username=?",
       [user.username],
       (err, result) => {
-        const { password, tokenForgot, ...user } = result[0];
+        const { password, token_forgot, ...user } = result[0];
         if (err) {
           console.log(err);
         } else {
@@ -208,7 +208,7 @@ export const requestForgotPassword = async (req, res) => {
             return;
           }
           db.query(
-            "UPDATE user SET tokenForgot = ? WHERE email = ?",
+            "UPDATE user SET token_forgot = ? WHERE email = ?",
             [token, email],
             (err, result) => {
               if (err) {
@@ -246,7 +246,7 @@ export const verifyForgotPassword = (req, res) => {
     if (result) {
       userFind = result[0];
 
-      if (userFind.tokenForgot !== otp) {
+      if (userFind.token_forgot !== otp) {
         res.status(422).json({ message: "OTP không chính xác" });
         return;
       }
@@ -261,15 +261,12 @@ export const forgotPassword = async (req, res) => {
     return;
   }
   let { email, newPassword } = req.body;
-  let userFind = null;
   const hashPassword = bcrypt.hashSync(newPassword, 10);
   db.query("select * from user where email=?", [email], (err, result) => {
     if (err) {
       res.status(422).json({ message: "không tồn tại email hợp lệ" });
     }
     if (result) {
-      userFind = result[0];
-
       db.query(
         "update user set password=? where email=?",
         [hashPassword, email],
