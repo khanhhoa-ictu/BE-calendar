@@ -8,9 +8,9 @@
 dist
 dist-ssr
 *.local
-package-lock.json
+# package-lock.json
 .env
-yarn.lock
+# yarn.lock
 # testing
 /coverage
 

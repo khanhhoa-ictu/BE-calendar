@@ -46,7 +46,7 @@ export const register = async (req, res) => {
   );
   const role = roleAccount.USER;
   db.query(
-    "INSERT INTO user (email, password, role) VALUES (?,?,?,?)",
+    "INSERT INTO user (email, password, role) VALUES (?,?,?)",
     [email, password, role],
     (err, result) => {
       if (err) {
@@ -70,11 +70,12 @@ export const login = (req, res) => {
         console.log(err);
       }
       if (result) {
+        console.log(result);
         const user = { id: result[0]?.id, email: result[0]?.email };
         if (!user.id) {
           res
             .status(422)
-            .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
+            .json({ message: "Tài khoản hoặc mật khẩu không chính xácccc" });
           return;
         }
         if (!bcrypt.compareSync(password, result[0].password)) {
@@ -293,4 +294,3 @@ export const profileById = (req, res) => {
     }
   });
 };
-
