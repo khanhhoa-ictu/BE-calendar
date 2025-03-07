@@ -47,6 +47,7 @@ export const register = async (req, res) => {
   const role = roleAccount.USER;
   db.query(
     "INSERT INTO user (email, password, role) VALUES (?,?,?)",
+    "INSERT INTO user (email, password, role) VALUES (?,?,?)",
     [email, password, role],
     (err, result) => {
       if (err) {
@@ -92,7 +93,7 @@ export const login = (req, res) => {
             iat: Math.floor(Date.now() / 1000) - 60 * 30,
           },
           "secret",
-          { expiresIn: "1h" }
+          { expiresIn: "1d" }
         );
         let refreshToken = jwt.sign(
           { email: email, iat: Math.floor(Date.now() / 1000) - 60 * 30 },
@@ -146,8 +147,8 @@ export const profile = (req, res) => {
   try {
     const user = jwt.verify(token, "secret");
     db.query(
-      "SELECT * FROM user WHERE username=?",
-      [user.username],
+      "SELECT * FROM user WHERE email=?",
+      [user.email],
       (err, result) => {
         const { password, token_forgot, ...user } = result[0];
         if (err) {
@@ -163,22 +164,6 @@ export const profile = (req, res) => {
 };
 
 
-export const detail = (req, res) => {
-  const { email, address, id } = req.body;
-  db.query(
-    "UPDATE user SET  email = ?, address = ? WHERE id=?",
-    [email, address, id],
-    (err, result) => {
-      if (err) {
-        console.log(err);
-        res.status(422).json("cập nhật thông tin thất bại");
-      }
-      if (result) {
-        res.status(200).json("cập nhật thông tin thành công");
-      }
-    }
-  );
-};
 
 export const requestForgotPassword = async (req, res) => {
   if (typeof req.body.email === "undefined") {
