@@ -37,7 +37,7 @@ export const addEvent = async (req, res) => {
 export const listEventByUser = (req, res) => {
   const user_id = req.params.user_id;
   db.query(
-    "SELECT * FROM event where user_id  = ?",
+    "SELECT * FROM event where user_id = ?",
     [user_id],
     (err, result) => {
       if (err) {
