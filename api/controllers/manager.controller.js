@@ -1,17 +1,46 @@
 import jwt from "jsonwebtoken";
 import { db } from "../../index.js";
-
+import { role as roleAccount } from "../../common/index.js";
+import bcrypt from "bcrypt";
 
 export const getListUser = (req, res) => {
-  db.query("SELECT * FROM user ", (err, result) => {
-    if (err) {
-      console.log(err);
+  db.query(
+    `SELECT * FROM user WHERE role=${roleAccount.USER}`,
+    (err, result) => {
+      if (err) {
+        return res
+          .status(422)
+          .json({ message: "không tìm thấy danh sách người dùng" });
+      }
+      if (result) {
+        const newData = result.map((item) => {
+          return {
+            email: item.email,
+            role: item.role,
+            id: item.id,
+          };
+        });
+        res.send(newData);
+      }
     }
-    if (result) {
-      res.send(result);
-    }
-  });
+  );
 };
+
+export const detailUser = (req, res) =>{
+  const id = req.params.id;
+  db.query(
+    "SELECT * FROM user WHERE id=?",
+    [id],
+    (err, result) => {
+      if (err) {
+        return res.status(422).json({message :"Không tìm thấy thông tin người dùng, vui lòng thử lại"});
+      }
+      if (result) {
+        res.send({data:result[0],  message: "thành công" });
+      }
+    }
+  );
+}
 
 export const deleteUser = (req, res) => {
   const id = req.params.id;
@@ -21,18 +50,18 @@ export const deleteUser = (req, res) => {
   try {
     user = jwt.verify(token, "secret");
   } catch (error) {
-    return res.status(422).json({ msg: "token không hợp lệ" });
+    return res.status(422).json({ message: "token không hợp lệ" });
   }
   db.query(
-    "SELECT * FROM user WHERE username=?",
-    [user.username],
+    "SELECT * FROM user WHERE email=?",
+    [user.email],
     (err, result) => {
       if (err) {
         console.log(err);
       }
       if (result) {
         user = result[0];
-        if (user.role !== "admin") {
+        if (user.role !== roleAccount.ADMIN) {
           return res.status(403).json("bạn không có quyền");
         }
         db.query("DELETE FROM user WHERE id=?", [id], (err, result) => {
@@ -40,9 +69,88 @@ export const deleteUser = (req, res) => {
             console.log(err);
           }
           if (result) {
-            res.send("delete user success");
+            res.send({ message: "xoá người dùng thành công" });
           }
         });
+      }
+    }
+  );
+};
+
+export const addUser = (req, res) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader.split(" ")[1];
+  let user = null
+  try {
+    user = jwt.verify(token, "secret");
+  } catch (error) {
+    return res.status(422).json({ message: "token không hợp lệ" });
+  }
+  let { email, password } = req.body;
+  password = bcrypt.hashSync(password, 10);
+  db.query("SELECT * FROM user WHERE email = ?", [email], (err, result) => {
+    if (err) {
+      console.log(err);
+    }
+    if (result) {
+      let user = result[0];
+      if (!!user) {
+        res.status(422).json({ message: "email đã tồn tại" });
+        return;
+      }
+    }
+  });
+  const role = roleAccount.USER;
+  db.query(
+    "SELECT * FROM user WHERE email=?",
+    [user.email],
+    (err, result) => {
+      if (err) {
+        res
+        .status(422)
+        .json({
+          message: "không tìm thấy người dùng, vui lòng thử lại",
+        });
+      }
+      if (result) {
+        user = result[0];
+        if (user.role !== roleAccount.ADMIN) {
+          return res.status(403).json("bạn không có quyền");
+        }
+        db.query(
+          "INSERT INTO user (email, password, role) VALUES (?,?,?)",
+          [email, password, role],
+          (err, result) => {
+            if (err) {
+              res
+                .status(422)
+                .json({
+                  message: "thêm người dùng thất bại, vui lòng thử lại",
+                });
+            }
+            if (result) {
+              res.status(200).json({ message: "thêm người dùng thành công" });
+            }
+          }
+        );
+      }
+    }
+  );
+};
+
+export const updateUser = (req, res) => {
+  const { email, id } = req.body;
+  db.query(
+    "update user set email=? where id = ?",
+    [email, id],
+    (err, result) => {
+      if (err) {
+        res.status(422).json({ message: "không tìm thấy người dùng phù hợp" });
+      }
+      if (result) {
+        res
+          .status(200)
+          .json({ message: "cập nhật thông tin người dùng thành công" });
       }
     }
   );
