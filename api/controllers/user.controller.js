@@ -95,12 +95,8 @@ export const login = (req, res) => {
           "secret",
           { expiresIn: "1d" }
         );
-        let refreshToken = jwt.sign(
-          { email: email, iat: Math.floor(Date.now() / 1000) - 60 * 30 },
-          "re-secret",
-          { expiresIn: "10 days" }
-        );
-        res.send({ token, refreshToken, user });
+       
+        res.send({ token, user });
       }
     }
   );
