@@ -57,7 +57,7 @@ export const deleteUser = (req, res) => {
     [user.email],
     (err, result) => {
       if (err) {
-        console.log(err);
+        return res.status(422).json({message :"Không tìm thấy thông tin người dùng, vui lòng thử lại"});
       }
       if (result) {
         user = result[0];
@@ -66,7 +66,7 @@ export const deleteUser = (req, res) => {
         }
         db.query("DELETE FROM user WHERE id=?", [id], (err, result) => {
           if (err) {
-            console.log(err);
+            return res.status(422).json({message :"Không tìm thấy thông tin người dùng, vui lòng thử lại"});
           }
           if (result) {
             res.send({ message: "xoá người dùng thành công" });
@@ -88,18 +88,7 @@ export const addUser = (req, res) => {
   }
   let { email, password } = req.body;
   password = bcrypt.hashSync(password, 10);
-  // db.query("SELECT * FROM user WHERE email = ?", [email], (err, result) => {
-  //   if (err) {
-  //     console.log(err);
-  //   }
-  //   if (result) {
-  //     let user = result[0];
-  //     if (!!user) {
-  //       res.status(422).json({ message: "email đã tồn tại" });
-  //       return;
-  //     }
-  //   }
-  // });
+
   const role = roleAccount.USER;
   db.query(
     "SELECT * FROM user WHERE email=?",
@@ -109,7 +98,7 @@ export const addUser = (req, res) => {
         res
         .status(422)
         .json({
-          message: "không tìm thấy người dùng, vui lòng thử lại",
+          message: "thêm người dùng thất bại, vui lòng thử lại",
         });
       }
       if (result) {
@@ -140,6 +129,23 @@ export const addUser = (req, res) => {
 
 export const updateUser = (req, res) => {
   const { email, id } = req.body;
+  db.query(
+    "SELECT * FROM user WHERE email = ?",
+    [email],
+    (err, result) => {
+      if (err) {
+        console.log(err);
+      }
+      if (result) {
+        let user = result[0];
+        if (!!user) {
+          res.status(422).json({ message: "email đã tồn tại" });
+          return;
+        }
+      }
+    }
+  );
+  
   db.query(
     "update user set email=? where id = ?",
     [email, id],
