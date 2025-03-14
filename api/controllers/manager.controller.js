@@ -88,18 +88,18 @@ export const addUser = (req, res) => {
   }
   let { email, password } = req.body;
   password = bcrypt.hashSync(password, 10);
-  db.query("SELECT * FROM user WHERE email = ?", [email], (err, result) => {
-    if (err) {
-      console.log(err);
-    }
-    if (result) {
-      let user = result[0];
-      if (!!user) {
-        res.status(422).json({ message: "email đã tồn tại" });
-        return;
-      }
-    }
-  });
+  // db.query("SELECT * FROM user WHERE email = ?", [email], (err, result) => {
+  //   if (err) {
+  //     console.log(err);
+  //   }
+  //   if (result) {
+  //     let user = result[0];
+  //     if (!!user) {
+  //       res.status(422).json({ message: "email đã tồn tại" });
+  //       return;
+  //     }
+  //   }
+  // });
   const role = roleAccount.USER;
   db.query(
     "SELECT * FROM user WHERE email=?",
