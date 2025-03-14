@@ -137,7 +137,7 @@ export const refreshToken = (req, res) => {
 
 export const profile = (req, res) => {
   const authHeader = req.headers.authorization;
-  const token = authHeader.split(" ")[1];
+  const token = authHeader?.split(" ")[1];
   try {
     const user = jwt.verify(token, "secret");
     db.query(
