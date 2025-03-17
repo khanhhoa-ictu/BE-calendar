@@ -155,7 +155,7 @@ export const profile = (req, res) => {
       }
     );
   } catch (error) {
-    res.status(401).send("token Invalid");
+    res.status(401).send({message: "token hết hạn"});
   }
 };
 

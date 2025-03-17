@@ -5,6 +5,7 @@ import mysql from "mysql2";
 import userManager from "./api/routers/manager.router.js";
 import userRouter from "./api/routers/user.router.js";
 import eventRouter from './api/routers/event.router.js'
+import googleAuth from './api/routers/google.router.js'
 
 const app = express();
 app.use(express.json());
@@ -28,6 +29,7 @@ export const db = mysql.createConnection({
 app.use(userRouter);
 app.use(userManager);
 app.use(eventRouter)
+app.use(googleAuth)
 
 app.listen(8080, () => {
   console.log("run");
