@@ -29,7 +29,6 @@ export const sendEmailForgotPassword = async (email, token) => {
   try {
     await transporter.sendMail(mailOptions);
   } catch (err) {
-    console.log(err);
     return false;
   }
   return true;

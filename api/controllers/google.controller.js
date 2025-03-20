@@ -2,28 +2,37 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 import axios from "axios";
 import { db } from "./../../index.js";
+import { getGoogleUserInfo, getRecurrenceRule } from "../../common/index.js";
 
 dotenv.config();
 
 // Cấu hình OAuth2
-const oauth2Client = new google.auth.OAuth2(
+export const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   process.env.GOOGLE_REDIRECT_URI
 );
 
-// Tạo URL đăng nhập Google OAuth2
-export const getAuthURL = () => {
-  const scopes = ["https://www.googleapis.com/auth/calendar"];
-  return oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: scopes,
-    prompt: "consent",
-  });
-};
-
 export const loginGoogle = (req, res) => {
-  res.redirect(getAuthURL());
+  const userId = req.params.userId
+  // Truy vấn email Google đã liên kết từ database
+  db.query("SELECT google_email FROM user WHERE id = ?", [userId], (err, result) => {
+    if (err || !result.length) return res.status(500).send("Lỗi truy vấn database");
+
+    const googleEmail = result[0]?.google_email; // Email đã đồng bộ trước đó
+    const scopes = ["https://www.googleapis.com/auth/calendar","https://www.googleapis.com/auth/userinfo.email"];
+    let authUrl = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: scopes,
+      prompt: googleEmail ? "none" : "select_account", // Nếu đã liên kết thì không hiển thị chọn tài khoản
+    });
+
+    if (googleEmail) {
+      // Chỉ truyền login_hint nếu đã có tài khoản liên kết
+      authUrl += `&login_hint=${encodeURIComponent(googleEmail)}`;
+    }
+    res.redirect(authUrl);
+  });
 };
 
 export const googleCallback = async (req, res) => {
@@ -59,14 +68,11 @@ export const googleCallback = async (req, res) => {
   }
 };
 
-const getRecurrenceRule = (frequency) => {
-  let rule = `RRULE:FREQ=${frequency.toUpperCase()}`;
-  return rule;
-};
+
 
 export const syncCalendar = async (req, res) => {
-  const { accessToken, refreshToken, userId } = req.body;
-  if (!accessToken || !refreshToken) {
+  const { accessToken, userId } = req.body;
+  if (!accessToken) {
     return res
       .status(401)
       .json({ message: "Người dùng chưa đăng nhập Google" });
@@ -74,7 +80,6 @@ export const syncCalendar = async (req, res) => {
 
   oauth2Client.setCredentials({
     access_token: accessToken,
-    refresh_token: refreshToken,
   });
 
   const calendar = google.calendar({ version: "v3", auth: oauth2Client });
@@ -105,10 +110,8 @@ export const syncCalendar = async (req, res) => {
               if (!recurringData.length) return;
 
               const recurrenceType = recurringData[0]?.frequency; // 'none', 'daily', 'weekly', 'monthly'
-             
-              const recurrenceRule = getRecurrenceRule(
-                recurrenceType,
-              );
+
+              const recurrenceRule = getRecurrenceRule(recurrenceType);
               const googleEvent = {
                 summary: event.title,
                 description: event.description,
@@ -120,27 +123,31 @@ export const syncCalendar = async (req, res) => {
                   dateTime: new Date(event.end_time).toISOString(),
                   timeZone: "Asia/Ho_Chi_Minh",
                 },
-                recurrence: recurrenceType === "none" ? undefined :[recurrenceRule],
+                recurrence:
+                  recurrenceType === "none" ? undefined : [recurrenceRule],
               };
               const response = await calendar.events.insert({
                 calendarId: "primary",
                 resource: googleEvent,
               });
+              const googleEventId = response.data.id;
+              const email = await getGoogleUserInfo(accessToken);
               // 🔹 Nếu không có lặp lại, tạo sự kiện bình thường
-              if (recurrenceType === "none") {
-                if (response.status === 200) {
-                  db.query("UPDATE event SET synced = 1 WHERE id = ?", [
-                    event.id,
-                  ]);
+              db.query("SELECT * FROM user WHERE id = ?", [userId],(err, result)=>{
+                if(err){
+                  res.status(422).json({ message: "Lỗi đồng bộ" });
                 }
-              } else {
+                if(!result[0]?.google_email){
+                  db.query("UPDATE user SET google_email = ? WHERE id = ?", [email, userId]);
+                }
                 if (response.status === 200) {
                   db.query(
-                    "UPDATE event SET synced = 1 WHERE recurring_id = ?",
-                    [event.recurring_id]
+                    "UPDATE event SET synced = 1, google_event_id = ? WHERE recurring_id = ?",
+                    [googleEventId, event.recurring_id]
                   );
                 }
-              }
+              });
+             
             }
           );
         }
@@ -153,17 +160,23 @@ export const syncCalendar = async (req, res) => {
   );
 };
 
-export const checkSyncCalendar = (req, res) =>{
+export const checkSyncCalendar = (req, res) => {
   const user_id = req.params.user_id;
-  db.query("SELECT * FROM event WHERE user_id = ?  AND synced = 0", [user_id],(err,result)=>{
-    if(result.length === 0){
-      res.status(200).json({ message: "dữ liệu đã được đồng bộ", data: [] });
+  db.query(
+    "SELECT * FROM event WHERE user_id = ?  AND synced = 0",
+    [user_id],
+    (err, result) => {
+      if (result.length === 0) {
+        res.status(200).json({ message: "dữ liệu đã được đồng bộ", data: [] });
+      }
+      if (result.length !== 0) {
+        res
+          .status(200)
+          .json({ message: "dữ liệu chưa được đồng bộ hết", data: result });
+      }
+      if (err) {
+        res.status(500).json({ message: "Lỗi không tìm thấy dữ liệu" });
+      }
     }
-    if(result.length !== 0){
-      res.status(200).json({ message: "dữ liệu chưa được đồng bộ hết", data: result });
-    }
-    if(err){
-      res.status(500).json({ message: "Lỗi không tìm thấy dữ liệu" });
-    }
-  })
-}
+  );
+};
