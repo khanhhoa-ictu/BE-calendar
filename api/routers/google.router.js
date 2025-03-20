@@ -6,7 +6,7 @@ import { checkSyncCalendar, googleCallback, loginGoogle, syncCalendar } from "..
 
 const router = express.Router();
 
-router.get("/google/auth", loginGoogle);
+router.get("/google/auth/:userId", loginGoogle);
 router.post("/google/callback", googleCallback);
 router.post("/google/sync-calendar", syncCalendar);
 router.get("/google/sync-calendar/check/:user_id", checkSyncCalendar);
