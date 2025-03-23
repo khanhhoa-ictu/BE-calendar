@@ -24,7 +24,7 @@ export const loginGoogle = (req, res) => {
     let authUrl = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: scopes,
-      prompt: googleEmail ? "none" : "select_account", // Nếu đã liên kết thì không hiển thị chọn tài khoản
+      prompt: googleEmail ? "none" : "consent", // Nếu đã liên kết thì không hiển thị chọn tài khoản
     });
 
     if (googleEmail) {
@@ -36,7 +36,7 @@ export const loginGoogle = (req, res) => {
 };
 
 export const googleCallback = async (req, res) => {
-  const { code } = req.body;
+  const { code, userId } = req.body;
 
   const data = {
     client_id: process.env.GOOGLE_CLIENT_ID,
@@ -56,7 +56,10 @@ export const googleCallback = async (req, res) => {
     );
 
     const { access_token, refresh_token, expires_in } = response.data;
-
+    db.query("UPDATE user SET refresh_token_google = ? WHERE id = ?", [
+      refresh_token,
+      userId,
+    ]);
     // Gửi token về cho FE hoặc lưu vào DB
     res.json({ access_token, refresh_token, expires_in });
   } catch (error) {
@@ -166,7 +169,7 @@ export const checkSyncCalendar = (req, res) => {
     "SELECT * FROM event WHERE user_id = ?  AND synced = 0",
     [user_id],
     (err, result) => {
-      if (result.length === 0) {
+      if (result?.length === 0) {
         res.status(200).json({ message: "dữ liệu đã được đồng bộ", data: [] });
       }
       if (result.length !== 0) {
@@ -180,3 +183,19 @@ export const checkSyncCalendar = (req, res) => {
     }
   );
 };
+
+export const refreshTokenGoogle =(req, res) =>{
+  const userId = req.params.userId;
+  db.query("SELECT * FROM user WHERE id = ?", [userId], async (err, results) => {
+    if (err || results.length === 0) return res.status(400).json({ message: "Không tìm thấy user" });
+    const refreshToken = results[0].refresh_token_google;
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+    try {
+      const { credentials } = await oauth2Client.refreshAccessToken();
+      res.json({ accessToken: credentials.access_token });
+    } catch (error) {
+      res.status(500).json({ message: "Lỗi lấy access token mới", error });
+    }
+  });
+}
