@@ -78,28 +78,35 @@ export const addEvent = async (req, res) => {
                 });
               })
             );
-            const googleEventId = await insertCalendarToGoogle(frequency, {
-              title,
-              description,
-              start_time,
-              end_time,
-              recurringId,
-            });
-            db.query(
-              "UPDATE event SET google_event_id = ?, synced = ? WHERE recurring_id = ?",
-              [googleEventId, 1, recurringId],
-              (err) => {
-                if (err) {
-                  return res.status(442).json({
-                    message: "Đồng bộ lên Google Calendar không thành công",
+            if (accessToken) {
+              const googleEventId = await insertCalendarToGoogle(frequency, {
+                title,
+                description,
+                start_time,
+                end_time,
+                recurringId,
+              });
+              db.query(
+                "UPDATE event SET google_event_id = ?, synced = ? WHERE recurring_id = ?",
+                [googleEventId, 1, recurringId],
+                (err) => {
+                  if (err) {
+                    return res.status(442).json({
+                      message: "Đồng bộ lên Google Calendar không thành công",
+                    });
+                  }
+                  res.status(200).json({
+                    message: "Chuỗi sự kiện đã được tạo!",
+                    data: events,
                   });
                 }
-                res.status(200).json({
-                  message: "Chuỗi sự kiện đã được tạo!",
-                  data: events,
-                });
-              }
-            );
+              );
+            } else {
+              res.status(200).json({
+                message: "Chuỗi sự kiện đã được tạo!",
+                data: events,
+              });
+            }
           } catch (error) {
             res.status(442).json({
               message: "Thêm sự kiện thất bại, vui lòng kiểm tra lại",

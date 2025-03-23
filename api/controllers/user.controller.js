@@ -47,7 +47,6 @@ export const register = async (req, res) => {
   const role = roleAccount.USER;
   db.query(
     "INSERT INTO user (email, password, role) VALUES (?,?,?)",
-    "INSERT INTO user (email, password, role) VALUES (?,?,?)",
     [email, password, role],
     (err, result) => {
       if (err) {
