@@ -22,7 +22,7 @@ app.use(
 export const db = mysql.createConnection({
   user: "root",
   host: "localhost",
-  password: "123456",
+  password: "mysql",
   database: "calendar",
 });
 
