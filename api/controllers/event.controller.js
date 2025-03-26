@@ -78,28 +78,35 @@ export const addEvent = async (req, res) => {
                 });
               })
             );
-            const googleEventId = await insertCalendarToGoogle(frequency, {
-              title,
-              description,
-              start_time,
-              end_time,
-              recurringId,
-            });
-            db.query(
-              "UPDATE event SET google_event_id = ?, synced = ? WHERE recurring_id = ?",
-              [googleEventId, 1, recurringId],
-              (err) => {
-                if (err) {
-                  return res.status(442).json({
-                    message: "Đồng bộ lên Google Calendar không thành công",
+            if (accessToken) {
+              const googleEventId = await insertCalendarToGoogle(frequency, {
+                title,
+                description,
+                start_time,
+                end_time,
+                recurringId,
+              });
+              db.query(
+                "UPDATE event SET google_event_id = ?, synced = ? WHERE recurring_id = ?",
+                [googleEventId, 1, recurringId],
+                (err) => {
+                  if (err) {
+                    return res.status(442).json({
+                      message: "Đồng bộ lên Google Calendar không thành công",
+                    });
+                  }
+                  res.status(200).json({
+                    message: "Chuỗi sự kiện đã được tạo!",
+                    data: events,
                   });
                 }
-                res.status(200).json({
-                  message: "Chuỗi sự kiện đã được tạo!",
-                  data: events,
-                });
-              }
-            );
+              );
+            } else {
+              res.status(200).json({
+                message: "Chuỗi sự kiện đã được tạo!",
+                data: events,
+              });
+            }
           } catch (error) {
             res.status(442).json({
               message: "Thêm sự kiện thất bại, vui lòng kiểm tra lại",
@@ -209,68 +216,126 @@ export const listEventByUser = (req, res) => {
 export const updateEvent = (req, res) => {
   const { id, title, description, start_time, end_time, accessToken } =
     req.body;
+
   if (accessToken) {
     oauth2Client.setCredentials({ access_token: accessToken });
   }
+
   db.query("SELECT * FROM event WHERE id = ?", [id], async (err, result) => {
-    if (result) {
-      const googleEventId = result[0].google_event_id;
-      if (googleEventId) {
-        const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-        const instances = await calendar.events.instances({
-          calendarId: "primary",
-          eventId: googleEventId, // ID của sự kiện gốc
-        });
+    if (err) {
+      return res
+        .status(500)
+        .json({ message: "Lỗi truy vấn database", error: err });
+    }
 
-        // Tìm instance cụ thể cần cập nhật dựa trên thời gian bắt đầu
-        const instanceToUpdate = instances.data.items.find((event) => {
-          const eventStart = new Date(event.start.dateTime).getTime();
-          const dbStart = new Date(result[0]?.start_time).getTime();
-          return eventStart === dbStart;
-        });
+    if (!result.length) {
+      return res.status(404).json({ message: "Không tìm thấy sự kiện" });
+    }
 
-        const response = await calendar.events.patch({
-          calendarId: "primary",
-          eventId: instanceToUpdate?.id,
-          resource: {
-            summary: title,
-            description: description,
-            start: {
-              dateTime: new Date(start_time).toISOString(),
-              timeZone: "Asia/Ho_Chi_Minh",
-            },
-            end: {
-              dateTime: new Date(end_time).toISOString(),
-              timeZone: "Asia/Ho_Chi_Minh",
-            },
-          },
-        });
-        if (response.status === 200) {
-          db.query(
-            "UPDATE event SET  title = ?, description = ?, start_time = ?, end_time = ? WHERE id=?",
-            [title, description, start_time, end_time, id]
-          );
-          res.json({ message: "Cập nhật sự kiện thành công!" });
-        } else {
-          res.status(500).json({ message: "Lỗi cập nhật Google Calendar" });
-        }
+    const googleEventId = result[0]?.google_event_id;
 
-        return;
-      }
-      db.query(
-        "UPDATE event SET  title = ?, description = ?, start_time = ?, end_time = ? WHERE id=?",
+    if (!googleEventId) {
+      // Nếu sự kiện không liên kết với Google, chỉ cập nhật database
+      return db.query(
+        "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
         [title, description, start_time, end_time, id],
-        (err, result) => {
+        (err) => {
           if (err) {
-            res.status(422).json({ message: "cập nhật thông tin thất bại" });
+            return res
+              .status(500)
+              .json({ message: "Cập nhật database thất bại", error: err });
           }
-          if (result) {
-          }
+          res
+            .status(200)
+            .json({ message: "Cập nhật thành công trong database!" });
         }
       );
     }
-    if (err) {
-      res.status(422).json({ message: "không tìm thấy sự kiện" });
+
+    try {
+      const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+      // Lấy danh sách instances để tìm event cần cập nhật
+      const instances = await calendar.events.instances({
+        calendarId: "primary",
+        eventId: googleEventId,
+      });
+      if (!instances.data.items || instances.data.items.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "Không tìm thấy instance của sự kiện" });
+      }
+
+      // Tìm instance có thời gian bắt đầu trùng với database
+      const instanceToUpdate = instances.data.items.find((event) => {
+        const eventStart = new Date(event.start.dateTime).getTime();
+        const dbStart = new Date(result[0]?.start_time).getTime();
+        return eventStart === dbStart;
+      });
+
+      if (!instanceToUpdate && !result[0]?.instance_id) {
+        return res
+          .status(404)
+          .json({ message: "Không tìm thấy instance phù hợp để cập nhật" });
+      }
+
+      // Cập nhật sự kiện trên Google Calendar
+      const response = await calendar.events.patch({
+        calendarId: "primary",
+        eventId: instanceToUpdate?.id || result[0]?.instance_id,
+        resource: {
+          summary: title,
+          description: description,
+          start: {
+            dateTime: new Date(start_time).toISOString(),
+            timeZone: "Asia/Ho_Chi_Minh",
+          },
+          end: {
+            dateTime: new Date(end_time).toISOString(),
+            timeZone: "Asia/Ho_Chi_Minh",
+          },
+        },
+      });
+
+      if (response.status === 200) {
+        // Nếu cập nhật trên Google thành công, cập nhật cả database
+        if (googleEventId === response.data.id) {
+          db.query(
+            "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
+            [title, description, start_time, end_time, id],
+            (err) => {
+              if (err) {
+                return res
+                  .status(500)
+                  .json({ message: "Cập nhật database thất bại", error: err });
+              }
+              res.status(200).json({
+                message: "Cập nhật thành công trên Google và database!",
+              });
+            }
+          );
+        } else {
+          db.query(
+            "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ?  WHERE id = ?",
+            [title, description, start_time, end_time, response.data.id, id],
+            (err) => {
+              if (err) {
+                return res
+                  .status(500)
+                  .json({ message: "Cập nhật database thất bại", error: err });
+              }
+              res.status(200).json({
+                message: "Cập nhật thành công trên Google và database!",
+              });
+            }
+          );
+        }
+      } else {
+        res.status(500).json({ message: "Lỗi cập nhật Google Calendar" });
+      }
+    } catch (error) {
+      res
+        .status(500)
+        .json({ message: "Lỗi khi gọi Google API", error: error.message });
     }
   });
 };
@@ -523,14 +588,11 @@ export const updateRecurringEvent = (req, res) => {
               [id],
               async (err, result) => {
                 if (err) return reject(err);
+
                 if (!result.length)
                   return reject(new Error("Không tìm thấy sự kiện"));
 
                 const googleEventId = result[0]?.google_event_id;
-
-                if (!googleEventId)
-                  return reject(new Error("Thiếu Google Event ID"));
-
                 try {
                   const calendar = google.calendar({
                     version: "v3",
@@ -543,13 +605,12 @@ export const updateRecurringEvent = (req, res) => {
                     eventId: googleEventId,
                   });
                   if (response?.status === 204) {
-                    // Xóa tất cả sự kiện có cùng recurring_id trong database
                     db.query(
                       "DELETE FROM event WHERE recurring_id = ?",
                       [recurringId],
-                      (err, result) => {
+                      (err) => {
                         if (err) return reject(err);
-                        resolve(); // Đảm bảo Promise kết thúc
+                        resolve("Xóa sự kiện thành công!");
                       }
                     );
                   } else {
@@ -558,7 +619,7 @@ export const updateRecurringEvent = (req, res) => {
                     );
                   }
                 } catch (error) {
-                  reject(error); // Bắt lỗi API
+                  reject(error); // BẮT LỖI ĐÚNG CÁCH
                 }
               }
             );
@@ -578,24 +639,29 @@ export const updateRecurringEvent = (req, res) => {
           });
         };
 
-        const insertNewEvents = async () => {
+        const insertNewEvents = async (listEvent, currentEvent) => {
           let events = [];
           let promises = [];
-          let startDate = new Date(start_time);
-          let endDate = new Date(end_time);
 
           if (frequency === "none") {
             db.query(
               "INSERT INTO event (user_id, title, description, start_time, end_time, recurring_id) VALUES (?, ?, ?, ?, ?, ?)",
-              [user_id, title, description, startDate, endDate, recurringId],
+              [
+                user_id,
+                title,
+                description,
+                new Date(start_time),
+                new Date(end_time),
+                recurringId,
+              ],
               (err, result) => {
                 if (err) reject(err);
                 else {
                   events.push({
                     id: result.insertId,
                     title,
-                    start_time: startDate,
-                    end_time: endDate,
+                    start_time: new Date(start_time),
+                    end_time: new Date(end_time),
                   });
 
                   return Promise.resolve(events);
@@ -604,20 +670,30 @@ export const updateRecurringEvent = (req, res) => {
             );
             return;
           }
+          const oldStart = new Date(listEvent[0].start_time);
+          const diffDays = Math.round((oldStart - currentEvent?.start_time) / (1000 * 60 * 60 * 24));
+          const diffWeeks = Math.round(diffDays / 7);
+          const diffMonths = Math.round(diffDays / 30); // Giả định mỗi tháng có 30 ngày
+
 
           for (let i = 0; i < count; i++) {
-            let startDate = new Date(start_time);
-            let endDate = new Date(end_time);
+            const startDate = new Date(currentEvent?.start_time);
+            const endDate = new Date(currentEvent?.end_time);
 
+            // Tính số ngày chênh lệch so với sự kiện đầu tiên
+           
+            // Tạo thời gian mới cho sự kiện hiện tại
+            
+        
             if (frequency === "daily") {
-              startDate.setDate(startDate.getDate() + i);
-              endDate.setDate(endDate.getDate() + i);
+              startDate.setDate(startDate.getDate() + diffDays + i);
+              endDate.setDate(endDate.getDate() + diffDays + i);
             } else if (frequency === "weekly") {
-              startDate.setDate(startDate.getDate() + i * 7);
-              endDate.setDate(endDate.getDate() + i * 7);
+              startDate.setDate(startDate.getDate() + (diffWeeks + i) * 7);
+              endDate.setDate(endDate.getDate() + (diffWeeks + i)  * 7);
             } else if (frequency === "monthly") {
-              startDate.setMonth(startDate.getMonth() + i);
-              endDate.setMonth(endDate.getMonth() + i);
+              startDate.setMonth(startDate.getMonth() + diffMonths +i);
+              endDate.setMonth(endDate.getMonth() + diffMonths + i);
             }
 
             const queryPromise = new Promise((resolve, reject) => {
@@ -630,7 +706,7 @@ export const updateRecurringEvent = (req, res) => {
                   startDate,
                   endDate,
                   recurringId,
-                  1,
+                  accessToken ? 1 : 0,
                 ],
                 (err, result) => {
                   if (err) reject(err);
@@ -662,7 +738,21 @@ export const updateRecurringEvent = (req, res) => {
                 if (err) {
                   console.log(err);
                 }
-                const firstStartTime = new Date(result[0].start_time);
+                const events = await new Promise((resolve, reject) => {
+                  db.query(
+                    "SELECT * FROM event WHERE recurring_id = ? ORDER BY start_time ASC",
+                    [recurringId],
+                    (err, result) => {
+                      if (err) reject(err);
+                      else resolve(result);
+                    }
+                  );
+                });
+                const currentEvent = events.find((event) => event.id === id);
+                if (!currentEvent) {
+                  console.error("Không tìm thấy sự kiện cần cập nhật!");
+                  return;
+                }
                 const newStartDate = new Date(start_time);
                 const newEndDate = new Date(end_time);
 
@@ -673,7 +763,8 @@ export const updateRecurringEvent = (req, res) => {
 
                     // Tính số ngày chênh lệch so với sự kiện đầu tiên
                     const diffDays = Math.round(
-                      (oldStart - firstStartTime) / (1000 * 60 * 60 * 24)
+                      (oldStart - currentEvent?.start_time) /
+                        (1000 * 60 * 60 * 24)
                     );
 
                     // Tạo thời gian mới cho sự kiện hiện tại
@@ -704,85 +795,119 @@ export const updateRecurringEvent = (req, res) => {
           }
         };
 
-        // Xử lý cập nhật sự kiện lặp
-        (async () => {
-          try {
-            if (oldFrequency !== frequency) {
-              await deleteOldEvents();
-              await updateRecurringEvent();
-              const events = await insertNewEvents();
-              const googleEventId = await insertCalendarToGoogle(frequency, {
-                title,
-                description,
-                start_time,
-                end_time,
-                recurringId,
-              });
-              db.query(
-                "UPDATE event SET synced = 1, google_event_id = ? WHERE recurring_id = ?",
-                [googleEventId, recurringId]
-              );
-              db.commit((err) => {
-                if (err) throw err;
-                res
-                  .status(200)
-                  .json({ message: "Cập nhật thành công!", data: events });
-              });
-            } else {
-              db.query(
-                "SELECT * FROM event WHERE id = ?",
-                [id],
-                async (err, result) => {
-                  const googleEventId = result[0].google_event_id;
-
-                  if (googleEventId && accessToken) {
-                    const calendar = google.calendar({
-                      version: "v3",
-                      auth: oauth2Client,
-                    });
-                    const originalEvent = await calendar.events.get({
-                      calendarId: "primary",
-                      eventId: googleEventId,
-                    });
-                    const response = await calendar.events.update({
-                      calendarId: "primary",
-                      eventId: googleEventId,
-                      resource: {
-                        summary: title,
-                        description: description,
-                        start: {
-                          dateTime: new Date(start_time).toISOString(),
-                          timeZone: "Asia/Ho_Chi_Minh",
-                        },
-                        end: {
-                          dateTime: new Date(end_time).toISOString(),
-                          timeZone: "Asia/Ho_Chi_Minh",
-                        },
-                        recurrence: originalEvent.data.recurrence, //Giữ nguyên RRULE
-                      },
-                    });
-                    if (response.status === 200) {
-                      updateEvent();
-                      res.json({ message: "Cập nhật sự kiện thành công!" });
-                    } else {
-                      res
-                        .status(500)
-                        .json({ message: "Lỗi cập nhật Google Calendar" });
-                    }
-                  } else {
-                    updateEvent();
+        db.query(
+          "SELECT * FROM event WHERE recurring_id = ?",
+          [recurringId],
+          async (err, result) => {
+            if (err) res.json({ message: "không tìm thấy sự kiện!" });
+            else {
+              const listevents = await new Promise((resolve, reject) => {
+                db.query(
+                  "SELECT * FROM event WHERE recurring_id = ? ORDER BY start_time ASC",
+                  [recurringId],
+                  (err, result) => {
+                    if (err) reject(err);
+                    else resolve(result);
                   }
+                );
+              });
+              const currentEvent = listevents.find((event) => event.id === id);
+
+              (async () => {
+                try {
+                  if (oldFrequency !== frequency) {
+                    await deleteOldEvents();
+                    await updateRecurringEvent();
+                    const events = await insertNewEvents(listevents, currentEvent);
+
+                    if (accessToken) {
+                      const googleEventId = await insertCalendarToGoogle(
+                        frequency,
+                        {
+                          title,
+                          description,
+                          start_time: currentEvent.start_time,
+                          end_time: currentEvent.end_time,
+                          recurringId,
+
+                        }
+                      );
+                      db.query(
+                        "UPDATE event SET synced = 1, google_event_id = ? WHERE recurring_id = ?",
+                        [googleEventId, recurringId]
+                      );
+                    }
+
+                    db.commit((err) => {
+                      if (err) throw err;
+                      res.status(200).json({
+                        message: "Cập nhật thành công!",
+                        data: events,
+                      });
+                    });
+                  } else {
+                    db.query(
+                      "SELECT * FROM event WHERE id = ?",
+                      [id],
+                      async (err, result) => {
+                        const googleEventId = result[0].google_event_id;
+
+                        if (googleEventId && accessToken) {
+                          const calendar = google.calendar({
+                            version: "v3",
+                            auth: oauth2Client,
+                          });
+                          const originalEvent = await calendar.events.get({
+                            calendarId: "primary",
+                            eventId: googleEventId,
+                          });
+                          const response = await calendar.events.update({
+                            calendarId: "primary",
+                            eventId: googleEventId,
+                            resource: {
+                              summary: title,
+                              description: description,
+                              start: {
+                                dateTime: new Date(start_time).toISOString(),
+                                timeZone: "Asia/Ho_Chi_Minh",
+                              },
+                              end: {
+                                dateTime: new Date(end_time).toISOString(),
+                                timeZone: "Asia/Ho_Chi_Minh",
+                              },
+                              recurrence: originalEvent.data.recurrence, //Giữ nguyên RRULE
+                            },
+                          });
+                          if (response.status === 200) {
+                            updateEvent();
+                            res.json({
+                              message: "Cập nhật sự kiện thành công!",
+                            });
+                          } else {
+                            res.status(500).json({
+                              message: "Lỗi cập nhật Google Calendar",
+                            });
+                          }
+                        } else {
+                          updateEvent();
+                          res.json({ message: "Cập nhật sự kiện thành công!" });
+                        }
+                      }
+                    );
+                  }
+                } catch (err) {
+                  db.rollback(() => {
+                    res.status(500).json({
+                      message: "Lỗi khi cập nhật sự kiện",
+                      error: err,
+                    });
+                  });
                 }
-              );
+              })();
             }
-          } catch (err) {
-            db.rollback(() => {
-              res
-                .status(500)
-                .json({ message: "Lỗi khi cập nhật sự kiện", error: err });
-            });
           }
-        })();
+        );
+        // Xử lý cập nhật sự kiện lặp
       }
     );
   });
