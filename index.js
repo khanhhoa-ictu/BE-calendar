@@ -10,10 +10,10 @@ import googleAuth from './api/routers/google.router.js'
 const app = express();
 app.use(express.json());
 app.use(cors({
-  origin: "*", 
-  credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization"],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  origin: "http://localhost:3000", 
+  methods: "GET,POST,PUT,DELETE",
+  allowedHeaders: "Content-Type,Authorization,ngrok-skip-browser-warning",
+  credentials: true, 
 }));
 
 app.use(bodyParser.json({ limit: "50mb" }));

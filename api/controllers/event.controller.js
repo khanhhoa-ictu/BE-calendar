@@ -13,7 +13,6 @@ export const addEvent = async (req, res) => {
     end_time,
     accessToken,
   } = req.body;
-
   if (!user_id || !title || !start_time || !end_time) {
     return res.status(400).json({ message: "bạn cần nhập đầy đủ thông tin" });
   }
@@ -169,7 +168,7 @@ export const addEvent = async (req, res) => {
                   [googleEventId, 1, insertedId],
                   (err, result) => {
                     if (err) {
-                      res.status(442).json({
+                      return res.status(442).json({
                         message: "đông bộ lên google calendar không thành công",
                       });
                     }
@@ -177,7 +176,6 @@ export const addEvent = async (req, res) => {
                 );
               }
             }
-
             db.query(
               "SELECT * FROM event WHERE id = ?",
               [insertedId],
@@ -190,6 +188,28 @@ export const addEvent = async (req, res) => {
                 }
               }
             );
+            // if (emails.length > 0) {
+            //   const values = emails.map((email) => [insertedId, email]);
+
+            //   db.query(
+            //     "INSERT INTO event_attendees (event_id, email) VALUES ?",
+            //     [values],
+            //     (err) => {
+            //       if (err) {
+            //         return res.status(500).json({
+            //           message: "Lỗi lưu danh sách người tham gia",
+            //           error: err,
+            //         });
+            //       }
+            //       return res.status(200).json({
+            //         message: "Sự kiện đã được tạo",
+            //       });
+            //     }
+            //   );
+            // }
+            // res.status(200).json({
+            //   message: "Sự kiện đã được tạo",
+            // });
           }
         );
       }
@@ -671,28 +691,28 @@ export const updateRecurringEvent = (req, res) => {
             return;
           }
           const oldStart = new Date(listEvent[0].start_time);
-          const diffDays = Math.round((oldStart - currentEvent?.start_time) / (1000 * 60 * 60 * 24));
+          const diffDays = Math.round(
+            (oldStart - currentEvent?.start_time) / (1000 * 60 * 60 * 24)
+          );
           const diffWeeks = Math.round(diffDays / 7);
           const diffMonths = Math.round(diffDays / 30); // Giả định mỗi tháng có 30 ngày
-
 
           for (let i = 0; i < count; i++) {
             const startDate = new Date(currentEvent?.start_time);
             const endDate = new Date(currentEvent?.end_time);
 
             // Tính số ngày chênh lệch so với sự kiện đầu tiên
-           
+
             // Tạo thời gian mới cho sự kiện hiện tại
-            
-        
+
             if (frequency === "daily") {
               startDate.setDate(startDate.getDate() + diffDays + i);
               endDate.setDate(endDate.getDate() + diffDays + i);
             } else if (frequency === "weekly") {
               startDate.setDate(startDate.getDate() + (diffWeeks + i) * 7);
-              endDate.setDate(endDate.getDate() + (diffWeeks + i)  * 7);
+              endDate.setDate(endDate.getDate() + (diffWeeks + i) * 7);
             } else if (frequency === "monthly") {
-              startDate.setMonth(startDate.getMonth() + diffMonths +i);
+              startDate.setMonth(startDate.getMonth() + diffMonths + i);
               endDate.setMonth(endDate.getMonth() + diffMonths + i);
             }
 
@@ -818,7 +838,10 @@ export const updateRecurringEvent = (req, res) => {
                   if (oldFrequency !== frequency) {
                     await deleteOldEvents();
                     await updateRecurringEvent();
-                    const events = await insertNewEvents(listevents, currentEvent);
+                    const events = await insertNewEvents(
+                      listevents,
+                      currentEvent
+                    );
 
                     if (accessToken) {
                       const googleEventId = await insertCalendarToGoogle(
@@ -829,7 +852,6 @@ export const updateRecurringEvent = (req, res) => {
                           start_time: currentEvent.start_time,
                           end_time: currentEvent.end_time,
                           recurringId,
-
                         }
                       );
                       db.query(
