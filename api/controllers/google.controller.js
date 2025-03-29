@@ -272,7 +272,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://2f4c-2405-4802-1bd7-1860-691b-655b-37d2-eb70.ngrok-free.app/webhook",
+          "https://ceaf-117-1-95-251.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -352,6 +352,7 @@ export const webhookGoogle = async (req, res) => {
             // const updateEventIds = existingEventIds?.filter((id) =>
             //   fetchedEventIds.includes(id)
             // );
+            console.log(events);
 
             if (newEventIds.length > 0) {
               let allEvents = [];
@@ -469,7 +470,7 @@ export const webhookGoogle = async (req, res) => {
                                 (item) => item?.last_resource_id
                               );
                               const isExist = newMap.some((etag) =>
-                                etag.startsWith(event?.etag)
+                                etag?.startsWith(event?.etag)
                               );
 
                               if (isExist) {
@@ -485,8 +486,8 @@ export const webhookGoogle = async (req, res) => {
                                   results[0]?.id,
                                   `${event.etag}-1`,
                                   event.summary,
-                                  event.start.dateTime,
-                                  event.end.dateTime,
+                                  event?.start?.dateTime || new Date(),
+                                  event?.end?.dateTime || new Date(),
                                   event.description || "",
                                   recurringId,
                                   event?.id,
@@ -498,8 +499,8 @@ export const webhookGoogle = async (req, res) => {
                                   allEvents.push({
                                     id: event?.id,
                                     title: event.summary,
-                                    start_time: event.start.dateTime,
-                                    end_time: event.end.dateTime,
+                                    start_time: event?.start?.dateTime || new Date(),
+                                    end_time: event?.end?.dateTime || new Date(),
                                   });
                                   resolve();
                                 }
