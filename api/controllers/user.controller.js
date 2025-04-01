@@ -70,11 +70,12 @@ export const login = (req, res) => {
         console.log(err);
       }
       if (result) {
+        console.log(result);
         const user = { id: result[0]?.id, email: result[0]?.email };
         if (!user.id) {
           res
             .status(422)
-            .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
+            .json({ message: "Tài khoản hoặc mật khẩu không chính xácccc" });
           return;
         }
         if (!bcrypt.compareSync(password, result[0].password)) {
@@ -263,4 +264,13 @@ export const forgotPassword = async (req, res) => {
   });
 };
 
-
+export const profileById = (req, res) => {
+  const id = req.params.id;
+  db.query("SELECT * FROM user WHERE id=?", [id], (err, result) => {
+    if (err) {
+      res.status(422).json({ message: "không tìm thấy id" });
+    } else {
+      res.send(result[0]);
+    }
+  });
+};
