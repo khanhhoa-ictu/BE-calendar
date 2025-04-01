@@ -216,7 +216,7 @@ export const checkSyncCalendar = (req, res) => {
           .json({ message: "dữ liệu chưa được đồng bộ hết", data: result });
       }
       if (err) {
-        console.log(err)
+        console.log(err);
         res.status(500).json({ message: "Lỗi không tìm thấy dữ liệu" });
       }
     }
@@ -232,8 +232,10 @@ export const refreshTokenGoogle = (req, res) => {
       if (err || results.length === 0)
         return res.status(400).json({ message: "Không tìm thấy user" });
       const refreshToken = results[0].refresh_token_google;
-      if(!refreshToken){
-        return res.status(200).json({ message: "tài khoản chưa được đồng bộ lên google calendar" });
+      if (!refreshToken) {
+        return res
+          .status(200)
+          .json({ message: "tài khoản chưa được đồng bộ lên google calendar" });
       }
       oauth2Client.setCredentials({ refresh_token: refreshToken });
 
@@ -325,193 +327,269 @@ export const webhookGoogle = async (req, res) => {
         const events = response.data.items;
 
         db.query(
-          "SELECT google_event_id FROM event WHERE user_id = ?",
+          "SELECT google_event_id, last_resource_id FROM event WHERE user_id = ?",
           [results[0].id],
-          (err, existingEvents) => {
+          async (err, existingEvents) => {
             if (err) {
               return res
                 .status(500)
                 .json({ error: "Lỗi truy vấn sự kiện từ DB" });
             }
-
+            // Danh sách ID sự kiện trong DB
             const existingEventIds = existingEvents.map(
               (event) => event.google_event_id
-            ); // Danh sách ID sự kiện trong DB
+            );
+            const existingEventEtagId = existingEvents.map(
+              (event) => event.last_resource_id
+            );
+            const convertEtagId = existingEventEtagId.map((item) =>
+              item ? item?.match(/"(\d+)"/)[0] : ""
+            );
+            const newConvert = new Set(convertEtagId);
+
+            // Danh sách ID sự kiện trên google
             const fetchedEventIds = events.map((event) => event.id); // Danh sách ID sự kiện từ Google Calendar API
-            // console.log("existingEventIds===========", existingEvents);
-            // console.log("fetchedEventIds==============", fetchedEventIds);
-            // console.log("Event", events);
-            // 🔥 Tìm các sự kiện đã bị xóa trên Google Calendar nhưng vẫn tồn tại trong DB
+
+            const fetchedEventEtagId = events
+              .map((event) => event?.etag)
+              .filter((item) => item.status !== "cancelled");
+
             const deletedEventIds = existingEventIds.filter(
               (id) => !fetchedEventIds.includes(id)
             );
             const newEventIds = fetchedEventIds.filter(
               (id) => !existingEventIds.includes(id)
             );
-
-            // const updateEventIds = existingEventIds?.filter((id) =>
-            //   fetchedEventIds.includes(id)
-            // );
-            console.log(events);
-
+            const updateEventEtagId = fetchedEventEtagId?.filter(
+              (id) => ![...newConvert].includes(id)
+            );
+            const filterfetchedEvent = events.filter((item) =>
+              updateEventEtagId.includes(item?.etag)
+            );
+            const findItemUpdateInDatabase = existingEvents.find(
+              (item) => item?.google_event_id === filterfetchedEvent[0]?.id
+            );
+            console.log("event=============", events);
             if (newEventIds.length > 0) {
               let allEvents = [];
+              const listEventDelete = [];
 
-              const eventPromises = events.map((event) => {
-                return new Promise((resolve, reject) => {
-                  if (newEventIds.includes(event?.id)) {
-                    if (event?.recurrence) {
-                      // add list event
-                      const frequency = event?.recurrence[0]
-                        .match(/FREQ=([^;]+)/)[1]
-                        .toLowerCase();
-                      const count = frequency === "daily" ? 84 : 12;
-                      db.query(
-                        "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
-                        [frequency, count],
-                        async (err, result) => {
-                          if (err)
-                            return reject(
-                              "Thêm sự kiện thất bại, vui lòng kiểm tra lại"
-                            );
-
-                          if (result) {
-                            const recurringId = result.insertId;
-
-                            try {
-                              const eventInsertPromises = Array.from({
-                                length: count,
-                              }).map((_, i) => {
-                                return new Promise((resolve, reject) => {
-                                  // Sao chép ngày để tránh bị ghi đè khi thay đổi
-                                  let startDate = new Date(
-                                    event.start.dateTime
-                                  );
-                                  let endDate = new Date(event.end.dateTime);
-
-                                  if (frequency === "daily") {
-                                    startDate.setDate(startDate.getDate() + i);
-                                    endDate.setDate(endDate.getDate() + i);
-                                  } else if (frequency === "weekly") {
-                                    startDate.setDate(
-                                      startDate.getDate() + i * 7
-                                    );
-                                    endDate.setDate(endDate.getDate() + i * 7);
-                                  } else if (frequency === "monthly") {
-                                    startDate.setMonth(
-                                      startDate.getMonth() + i
-                                    );
-                                    endDate.setMonth(endDate.getMonth() + i);
-                                  }
-
-                                  db.query(
-                                    "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    [
-                                      results[0]?.id,
-                                      `${event.etag}-${i}`,
-                                      event.summary,
-                                      startDate, // Chuyển thành dạng chuẩn
-                                      endDate,
-                                      event.description || "",
-                                      recurringId,
-                                      event?.id,
-                                      1,
-                                    ],
-                                    (err, result) => {
-                                      if (err) {
-                                        console.error(
-                                          "❌ Error inserting event:",
-                                          err
-                                        );
-                                        return reject(err);
-                                      }
-
-                                      allEvents.push({
-                                        id: result.insertId,
-                                        title: event.summary,
-                                        start_time: startDate,
-                                        end_time: endDate,
-                                      });
-                                      resolve();
-                                    }
-                                  );
-                                });
-                              });
-
-                              await Promise.all(eventInsertPromises);
-
-                              resolve();
-                            } catch (error) {
-                             
-                              reject(
-                                "Thêm sự kiện thất bại, vui lòng kiểm tra lại"
-                              );
-                            }
+              const eventPromises = events.map((event, index) => {
+                return new Promise(async (resolve, reject) => {
+                  if (event.status === "cancelled") {
+                    if (
+                      event.recurringEventId &&
+                      event.originalStartTime?.dateTime
+                    ) {
+                      // 1. Xóa event bị hủy trong chuỗi
+                      await new Promise((resolve, reject) => {
+                        db.query(
+                          "DELETE FROM event WHERE google_event_id = ? AND start_time = ?",
+                          [
+                            event.recurringEventId,
+                            event.originalStartTime.dateTime,
+                          ],
+                          (err, result) => {
+                            if (err) return reject(err);
+                            resolve();
                           }
-                        }
-                      );
-                    } else {
-                      // add 1 event
-                      db.query(
-                        "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
-                        ["none", 1],
-                        (err, result) => {
-                          if (err) return reject("Lỗi thêm sự kiện vào DB");
+                        );
+                      });
+                      // 2. Lấy danh sách các event còn lại trong chuỗi
+                      const result = await new Promise((resolve, reject) => {
+                        db.query(
+                          "SELECT * FROM event WHERE google_event_id = ?",
+                          [event.recurringEventId],
+                          (err, result) => {
+                            if (err) return reject(err);
+                            resolve(result);
+                          }
+                        );
+                      });
 
-                          const recurringId = result.insertId;
-
-                          db.query(
-                            "SELECT last_resource_id FROM event WHERE user_id = ?",
-                            [results[0]?.id],
-                            (err, resultEvent) => {
-                              if (err) return reject("Lỗi truy vấn DB");
-
-                              const newMap = resultEvent?.map(
-                                (item) => item?.last_resource_id
-                              );
-                              const isExist = newMap.some((etag) =>
-                                etag?.startsWith(event?.etag)
-                              );
-
-                              if (isExist) {
-                                console.log(
-                                  `🔄 Sự kiện ${event?.id} không thay đổi (etag giống nhau), bỏ qua.`
-                                );
-                                return resolve();
-                              }
-
+                      // 3. Duyệt qua các event còn lại để cập nhật `last_resource_id`
+                      if (!listEventDelete.includes(event.etag)) {
+                        await Promise.all(
+                          result.map(async (item, index) => {
+                            // Nếu chưa tồn tại thì mới update
+                            await new Promise((resolve, reject) => {
                               db.query(
-                                "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                "UPDATE event SET last_resource_id=? WHERE last_resource_id = ?",
                                 [
-                                  results[0]?.id,
-                                  `${event.etag}-1`,
-                                  event.summary,
-                                  event?.start?.dateTime || new Date(),
-                                  event?.end?.dateTime || new Date(),
-                                  event.description || "",
-                                  recurringId,
-                                  event?.id,
-                                  1,
+                                  `${event.etag}-${index}`,
+                                  item.last_resource_id,
                                 ],
-                                (err) => {
-                                  if (err)
-                                    return reject("Lỗi lưu sự kiện vào DB");
-                                  allEvents.push({
-                                    id: event?.id,
-                                    title: event.summary,
-                                    start_time: event?.start?.dateTime || new Date(),
-                                    end_time: event?.end?.dateTime || new Date(),
-                                  });
+                                (err, result) => {
+                                  if (err) return reject(err);
                                   resolve();
                                 }
                               );
-                            }
-                          );
-                        }
-                      );
+                            });
+                          })
+                        );
+                      }
                     }
+                    listEventDelete.push(event.etag);
                   } else {
-                    resolve();
+                    if (newEventIds.includes(event?.id)) {
+                      if (event?.recurrence) {
+                        // add list event
+                        const frequency = event?.recurrence[0]
+                          .match(/FREQ=([^;]+)/)[1]
+                          .toLowerCase();
+                        const count = frequency === "daily" ? 84 : 12;
+                        db.query(
+                          "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
+                          [frequency, count],
+                          async (err, result) => {
+                            if (err)
+                              return reject(
+                                "Thêm sự kiện thất bại, vui lòng kiểm tra lại"
+                              );
+
+                            if (result) {
+                              const recurringId = result.insertId;
+
+                              try {
+                                const eventInsertPromises = Array.from({
+                                  length: count,
+                                }).map((_, i) => {
+                                  return new Promise((resolve, reject) => {
+                                    // Sao chép ngày để tránh bị ghi đè khi thay đổi
+                                    let startDate = new Date(
+                                      event?.start?.dateTime
+                                    );
+                                    let endDate = new Date(event.end.dateTime);
+
+                                    if (frequency === "daily") {
+                                      startDate.setDate(
+                                        startDate.getDate() + i
+                                      );
+                                      endDate.setDate(endDate.getDate() + i);
+                                    } else if (frequency === "weekly") {
+                                      startDate.setDate(
+                                        startDate.getDate() + i * 7
+                                      );
+                                      endDate.setDate(
+                                        endDate.getDate() + i * 7
+                                      );
+                                    } else if (frequency === "monthly") {
+                                      startDate.setMonth(
+                                        startDate.getMonth() + i
+                                      );
+                                      endDate.setMonth(endDate.getMonth() + i);
+                                    }
+
+                                    db.query(
+                                      "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      [
+                                        results[0]?.id,
+                                        `${event.etag}-${i}`,
+                                        event.summary,
+                                        startDate, // Chuyển thành dạng chuẩn
+                                        endDate,
+                                        event.description || "",
+                                        recurringId,
+                                        event?.id,
+                                        1,
+                                      ],
+                                      (err, result) => {
+                                        if (err) {
+                                          console.error(
+                                            "❌ Error inserting event:",
+                                            err
+                                          );
+                                          return reject(err);
+                                        }
+
+                                        allEvents.push({
+                                          id: result.insertId,
+                                          title: event.summary,
+                                          start_time: startDate,
+                                          end_time: endDate,
+                                        });
+                                        resolve();
+                                      }
+                                    );
+                                  });
+                                });
+
+                                await Promise.all(eventInsertPromises);
+
+                                resolve();
+                              } catch (error) {
+                                reject(
+                                  "Thêm sự kiện thất bại, vui lòng kiểm tra lại"
+                                );
+                              }
+                            }
+                          }
+                        );
+                      } else {
+                        // add 1 event
+                        db.query(
+                          "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
+                          ["none", 1],
+                          (err, result) => {
+                            if (err) return reject("Lỗi thêm sự kiện vào DB");
+
+                            const recurringId = result.insertId;
+
+                            db.query(
+                              "SELECT last_resource_id FROM event WHERE user_id = ?",
+                              [results[0]?.id],
+                              (err, resultEvent) => {
+                                if (err) return reject("Lỗi truy vấn DB");
+
+                                const newMap = resultEvent?.map(
+                                  (item) => item?.last_resource_id
+                                );
+                                const isExist = newMap.some((etag) =>
+                                  etag.startsWith(event?.etag)
+                                );
+
+                                if (isExist) {
+                                  console.log(
+                                    `🔄 Sự kiện ${event?.id} không thay đổi (etag giống nhau), bỏ qua.`
+                                  );
+                                  return resolve();
+                                }
+
+                                db.query(
+                                  "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  [
+                                    results[0]?.id,
+                                    `${event.etag}-1`,
+                                    event.summary,
+                                    event?.start?.dateTime || new Date(),
+                                    event?.end?.dateTime || new Date(),
+                                    event.description || "",
+                                    recurringId,
+                                    event?.id,
+                                    1,
+                                  ],
+                                  (err) => {
+                                    if (err)
+                                      return reject("Lỗi lưu sự kiện vào DB");
+                                    allEvents.push({
+                                      id: event?.id,
+                                      title: event.summary,
+                                      start_time:
+                                        event?.start?.dateTime || new Date(),
+                                      end_time:
+                                        event?.start?.dateTime || new Date(),
+                                    });
+                                    resolve();
+                                  }
+                                );
+                              }
+                            );
+                          }
+                        );
+                      }
+                    } else {
+                      resolve();
+                    }
                   }
                 });
               });
@@ -546,51 +624,108 @@ export const webhookGoogle = async (req, res) => {
                 );
               });
             }
+            //update
+            if (updateEventEtagId.length > 0 && findItemUpdateInDatabase) {
+              const itemUpdate = filterfetchedEvent[0];
 
-            // if (updateEventIds.length > 0) {
-            //   console.log('them ma vo sua a`')
-            //   events.forEach((event) => {
-            //     db.query(
-            //       "SELECT last_resource_id FROM event WHERE user_id = ?",
-            //       [results[0]?.id],
-            //       (err, resultEvent) => {
-            //         if (err) {
-            //           console.error("❌ Lỗi truy vấn DB:", err);
-            //           return;
-            //         }
-            //         // console.log("resultEvent", event?.etag);
-            //         const newMap = resultEvent?.map(
-            //           (item) => item?.last_resource_id
-            //         );
-            //         const isExist = newMap.includes(event?.etag);
-            //         // const isExist = resultEvent.length > 0;
-            //         // const lastEtag = isExist ? resultEvent[0].etag : null;
-            //         if (isExist) {
-            //           // console.log('zoooo')
-            //           console.log(
-            //             `🔄 Sự kiện ${resultEvent[0]?.google_event_id} không thay đổi (etag giống nhau), bỏ qua.`
-            //           );
-            //           return;
-            //         }
-            //         console.log("zoooo1", event.id);
-            //         db.query(
-            //           "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE google_event_id = ?",
-            //           [
-            //             event.summary,
-            //             event.start.dateTime,
-            //             event.end.dateTime,
-            //             event.description || "",
-            //             `${event.etag}-1`,
-            //             event.id,
-            //           ],
-            //           (err) => {
-            //             if (err) console.error("Lỗi lưu sự kiện vào DB:", err);
-            //           }
-            //         );
-            //       }
-            //     );
-            //   });
-            // }
+              const result = await new Promise((resolve, reject) => {
+                db.query(
+                  "SELECT * FROM event WHERE google_event_id = ?",
+                  [itemUpdate.id],
+                  (err, result) => {
+                    if (err) return reject(err);
+                    resolve(result);
+                  }
+                );
+              });
+
+              const oldRecurring = await new Promise((resolve, reject) => {
+                db.query(
+                  "SELECT * FROM recurring_events WHERE id = ?",
+                  [result[0]?.recurring_id],
+                  (err, result) => {
+                    if (err) return reject(err);
+                    resolve(result);
+                  }
+                );
+              });
+
+              if (itemUpdate?.recurrence || oldRecurring.frequency !== "none") {
+                // update list event
+                const frequency = itemUpdate?.recurrence
+                  ? itemUpdate?.recurrence[0]
+                      ?.match(/FREQ=([^;]+)/)[1]
+                      ?.toLowerCase()
+                  : "none";
+
+                //  Lấy danh sách các event còn lại trong chuỗi
+                console.log("frequency==================", frequency);
+                if (frequency === oldRecurring[0]?.frequency) {
+                  // khong thay doi recurring
+                  await Promise.all(
+                    result.map(async (item, index) => {
+                      await new Promise((resolve, reject) => {
+                        db.query(
+                          "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE last_resource_id = ?",
+                          [
+                            itemUpdate.summary,
+                            itemUpdate.start.dateTime,
+                            itemUpdate.end.dateTime,
+                            itemUpdate.description,
+                            `${itemUpdate.etag}-${index}`,
+                            item.last_resource_id,
+                          ],
+                          (err, result) => {
+                            if (err) return reject(err);
+                            resolve();
+                          }
+                        );
+                      });
+                    })
+                  );
+                } else {
+                  // thay doi recurring
+                  const listevents = await new Promise((resolve, reject) => {
+                    db.query(
+                      "SELECT * FROM event WHERE recurring_id = ? ORDER BY start_time ASC",
+                      [oldRecurring[0].id],
+                      (err, result) => {
+                        if (err) reject(err);
+                        else resolve(result);
+                      }
+                    );
+                  });
+                  const currentEvent = listevents.find(
+                    (event) => event.google_event_id === itemUpdate.id
+                  );
+                  await deleteOldEvents(oldRecurring[0]?.id);
+                  await updateRecurringEvent(frequency, oldRecurring[0]?.id);
+                  await insertNewEvents(
+                    listevents,
+                    itemUpdate,
+                    frequency,
+                    currentEvent.user_id,
+                    oldRecurring[0]?.id
+                  );
+                }
+              } else {
+                //update 1
+                db.query(
+                  "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE google_event_id = ?",
+                  [
+                    itemUpdate.summary,
+                    itemUpdate.start.dateTime || new Date(),
+                    itemUpdate.end.dateTime || new Date(),
+                    itemUpdate.description || "",
+                    `${itemUpdate.etag}-1`,
+                    itemUpdate.id,
+                  ],
+                  (err) => {
+                    if (err) console.error("Lỗi lưu sự kiện vào DB:", err);
+                  }
+                );
+              }
+            }
           }
         );
       }
@@ -598,4 +733,130 @@ export const webhookGoogle = async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+};
+
+const deleteOldEvents = (id) => {
+  return new Promise((resolve, reject) => {
+    db.query("DELETE FROM event WHERE recurring_id = ?", [id], (err) => {
+      if (err) return reject(err);
+      resolve("Xóa sự kiện thành công!");
+    });
+  });
+};
+
+const insertNewEvents = async (
+  listEvent,
+  currentEvent,
+  frequency,
+  userId,
+  recurringId
+) => {
+  let events = [];
+  let promises = [];
+
+  if (frequency === "none") {
+    db.query(
+      "INSERT INTO event (user_id, title, description, start_time, end_time, last_resource_id, recurring_id, synced, google_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        userId,
+        currentEvent?.summary,
+        currentEvent?.description,
+        currentEvent.start.dateTime || new Date(),
+        currentEvent.end.dateTime || new Date(),
+        `${currentEvent.etag}-1`,
+        recurringId,
+        1,
+        currentEvent?.id,
+      ],
+      (err, result) => {
+        if (err) reject(err);
+        else {
+          events.push({
+            id: result.insertId,
+            title: currentEvent?.summary,
+            start_time: new Date(currentEvent.start.dateTime),
+            end_time: new Date(currentEvent.start.dateTime),
+          });
+
+          return Promise.resolve(events);
+        }
+      }
+    );
+    return;
+  }
+  const count = frequency === "daily" ? 84 : 12;
+  const oldStart = new Date(listEvent[0].start_time);
+  const diffDays = Math.round(
+    (oldStart - new Date(currentEvent.start.dateTime)) / (1000 * 60 * 60 * 24)
+  );
+  const diffWeeks = Math.round(diffDays / 7);
+  const diffMonths = Math.round(diffDays / 30); // Giả định mỗi tháng có 30 ngày
+
+  for (let i = 0; i < count; i++) {
+    const startDate = new Date(currentEvent.start.dateTime);
+    const endDate = new Date(currentEvent.end.dateTime);
+
+    // Tính số ngày chênh lệch so với sự kiện đầu tiên
+
+    // Tạo thời gian mới cho sự kiện hiện tại
+
+    if (frequency === "daily") {
+      startDate.setDate(startDate.getDate() + diffDays + i);
+      endDate.setDate(endDate.getDate() + diffDays + i);
+    } else if (frequency === "weekly") {
+      startDate.setDate(startDate.getDate() + (diffWeeks + i) * 7);
+      endDate.setDate(endDate.getDate() + (diffWeeks + i) * 7);
+    } else if (frequency === "monthly") {
+      startDate.setMonth(startDate.getMonth() + diffMonths + i);
+      endDate.setMonth(endDate.getMonth() + diffMonths + i);
+    }
+
+    const queryPromise = new Promise((resolve, reject) => {
+      db.query(
+        "INSERT INTO event (user_id, title, description, start_time, end_time, last_resource_id, recurring_id, synced, google_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          userId,
+          currentEvent?.summary,
+          currentEvent?.description,
+          startDate || new Date(),
+          endDate || new Date(),
+          `${currentEvent.etag}-${i}`,
+          recurringId,
+          1,
+          currentEvent?.id,
+        ],
+        (err, result) => {
+          if (err) reject(err);
+          else {
+            events.push({
+              id: result.insertId,
+              title: currentEvent?.summary,
+              start_time: startDate,
+              end_time: endDate,
+            });
+            resolve();
+          }
+        }
+      );
+    });
+
+    promises.push(queryPromise);
+  }
+
+  return Promise.all(promises).then(() => events);
+};
+
+const updateRecurringEvent = (frequency, recurringId) => {
+  const count = frequency === "daily" ? 84 : 12;
+
+  return new Promise((resolve, reject) => {
+    db.query(
+      "UPDATE recurring_events SET frequency = ?, count = ? WHERE id = ?",
+      [frequency, count, recurringId],
+      (err, result) => {
+        if (err) reject(err);
+        else resolve();
+      }
+    );
+  });
 };
