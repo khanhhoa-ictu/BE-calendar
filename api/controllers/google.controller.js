@@ -366,8 +366,10 @@ export const webhookGoogle = async (req, res) => {
             const filterfetchedEvent = events.filter((item) =>
               updateEventEtagId.includes(item?.etag)
             );
-            const findItemUpdateInDatabase = existingEvents.find(
-              (item) => item?.google_event_id === filterfetchedEvent[0]?.id
+            const listIdUpdate = filterfetchedEvent?.map((item) => item.id);
+
+            const findItemUpdateInDatabase = existingEvents.find((item) =>
+              listIdUpdate.includes(item?.google_event_id)
             );
             console.log("event=============", events);
             if (newEventIds.length > 0) {
