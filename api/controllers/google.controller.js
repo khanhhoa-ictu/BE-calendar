@@ -27,6 +27,7 @@ export const loginGoogle = (req, res) => {
       const scopes = [
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/calendar.events",
       ];
       let authUrl = oauth2Client.generateAuthUrl({
         access_type: "offline",
