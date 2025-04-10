@@ -227,6 +227,10 @@ export const addEvent = async (req, res) => {
                   }
                 );
               }
+            } else {
+              return res.status(200).json({
+                message: "Sự kiện đã được tạo",
+              });
             }
           }
         );
@@ -957,7 +961,7 @@ export const updateRecurringEvent = (req, res) => {
                     // Tính số ngày chênh lệch so với sự kiện đầu tiên
                     const diffDays = Math.round(
                       (oldStart - currentEvent?.start_time) /
-                        (1000 * 60 * 60 * 24)
+                      (1000 * 60 * 60 * 24)
                     );
 
                     // Tạo thời gian mới cho sự kiện hiện tại
