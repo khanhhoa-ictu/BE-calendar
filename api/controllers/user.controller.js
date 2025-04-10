@@ -273,4 +273,14 @@ export const profileById = (req, res) => {
       res.send(result[0]);
     }
   });
+};export const getUserEmails = (req, res) => {
+  const userId = req.params.id;
+  const sql = "SELECT id, email FROM user WHERE id != ?";
+
+  db.query(sql, [userId], (err, results) => {
+    if (err) {
+      return res.status(500).json({ message: "Lỗi khi lấy danh sách email", error: err });
+    }
+    res.status(200).json({ users: results });
+  });
 };

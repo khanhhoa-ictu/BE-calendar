@@ -12,7 +12,9 @@ export const addEvent = async (req, res) => {
     start_time,
     end_time,
     accessToken,
+    emails,
   } = req.body;
+
   if (!user_id || !title || !start_time || !end_time) {
     return res.status(400).json({ message: "bạn cần nhập đầy đủ thông tin" });
   }
@@ -31,13 +33,13 @@ export const addEvent = async (req, res) => {
           });
         }
 
-        if (result) {
-          const recurringId = result.insertId;
-          let events = [];
+        const recurringId = result.insertId;
+        let events = [];
 
-          try {
-            await Promise.all(
-              Array.from({ length: count }, async (_, i) => {
+        try {
+          await Promise.all(
+            Array.from({ length: count }).map((_, i) => {
+              return new Promise((resolve, reject) => {
                 let startDate = new Date(start_time);
                 let endDate = new Date(end_time);
 
@@ -52,70 +54,86 @@ export const addEvent = async (req, res) => {
                   endDate.setMonth(endDate.getMonth() + i);
                 }
 
-                return new Promise((resolve, reject) => {
-                  db.query(
-                    "INSERT INTO event (user_id, title, description, start_time, end_time, recurring_id) VALUES (?, ?, ?, ?, ?, ?)",
-                    [
-                      user_id,
-                      title,
-                      description,
-                      startDate,
-                      endDate,
-                      recurringId,
-                    ],
-                    (err, result) => {
-                      if (err) return reject(err);
+                db.query(
+                  "INSERT INTO event (user_id, title, description, start_time, end_time, recurring_id) VALUES (?, ?, ?, ?, ?, ?)",
+                  [
+                    user_id,
+                    title,
+                    description,
+                    startDate,
+                    endDate,
+                    recurringId,
+                  ],
+                  (err, result) => {
+                    if (err) return reject(err);
+                    const insertedId = result.insertId;
+
+                    if (emails.length > 0 && accessToken) {
+                      const values = emails.map((email) => [
+                        insertedId,
+                        email,
+                        "accepted",
+                      ]);
+                      db.query(
+                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                        [values],
+                        (err) => {
+                          if (err) return reject(err);
+                          events.push({
+                            id: insertedId,
+                            title,
+                            start_time: startDate,
+                            end_time: endDate,
+                          });
+                          resolve();
+                        }
+                      );
+                    } else {
                       events.push({
-                        id: result.insertId,
+                        id: insertedId,
                         title,
                         start_time: startDate,
                         end_time: endDate,
                       });
                       resolve();
                     }
-                  );
-                });
-              })
-            );
-            if (accessToken) {
-              const googleEventId = await insertCalendarToGoogle(frequency, {
-                title,
-                description,
-                start_time,
-                end_time,
-                recurringId,
+                  }
+                );
               });
+            })
+          );
+
+          if (accessToken) {
+            const googleEventId = await insertCalendarToGoogle(
+              frequency,
+              { title, description, start_time, end_time, recurringId },
+              emails
+            );
+
+            await new Promise((resolve, reject) => {
               db.query(
                 "UPDATE event SET google_event_id = ?, synced = ? WHERE recurring_id = ?",
                 [googleEventId, 1, recurringId],
-                (err) => {
-                  if (err) {
-                    return res.status(442).json({
-                      message: "Đồng bộ lên Google Calendar không thành công",
-                    });
-                  }
-                  res.status(200).json({
-                    message: "Chuỗi sự kiện đã được tạo!",
-                    data: events,
-                  });
-                }
+                (err) => (err ? reject(err) : resolve())
               );
-            } else {
-              res.status(200).json({
-                message: "Chuỗi sự kiện đã được tạo!",
-                data: events,
-              });
-            }
-          } catch (error) {
-            res.status(442).json({
-              message: "Thêm sự kiện thất bại, vui lòng kiểm tra lại",
             });
           }
+
+          return res.status(200).json({
+            message: "Chuỗi sự kiện đã được tạo!",
+            data: events,
+          });
+        } catch (error) {
+          return res.status(500).json({
+            message: "Lỗi hệ thống khi tạo sự kiện",
+            error: error.message,
+          });
         }
       }
     );
     return;
   }
+
   db.query(
     "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
     [frequency, count],
@@ -156,11 +174,17 @@ export const addEvent = async (req, res) => {
                   timeZone: "Asia/Ho_Chi_Minh",
                 },
                 recurrence: frequency === "none" ? undefined : [recurrenceRule],
+                attendees: emails.map((email) => ({
+                  email,
+                  responseStatus: "accepted",
+                })),
               };
               const response = await calendar.events.insert({
                 calendarId: "primary",
                 resource: googleEvent,
+                sendUpdates: "all", // gửi thông báo mời tới attendees
               });
+
               const googleEventId = response.data.id;
               if (response?.status === 200) {
                 db.query(
@@ -172,44 +196,38 @@ export const addEvent = async (req, res) => {
                         message: "đông bộ lên google calendar không thành công",
                       });
                     }
+
+                    if (emails.length > 0) {
+                      const values = emails.map((email) => [
+                        insertedId,
+                        email,
+                        "accepted",
+                      ]);
+
+                      db.query(
+                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                        [values],
+                        (err) => {
+                          if (err) {
+                            return res.status(500).json({
+                              message: "Lỗi lưu danh sách người tham gia",
+                              error: err,
+                            });
+                          }
+                          return res.status(200).json({
+                            message: "Sự kiện đã được tạo",
+                          });
+                        }
+                      );
+                    } else {
+                      return res.status(200).json({
+                        message: "Sự kiện đã được tạo",
+                      });
+                    }
                   }
                 );
               }
             }
-            db.query(
-              "SELECT * FROM event WHERE id = ?",
-              [insertedId],
-              (err, result) => {
-                if (result) {
-                  res.status(200).json({
-                    data: [result[0]],
-                    message: "Thêm sự kiện thành công",
-                  });
-                }
-              }
-            );
-            // if (emails.length > 0) {
-            //   const values = emails.map((email) => [insertedId, email]);
-
-            //   db.query(
-            //     "INSERT INTO event_attendees (event_id, email) VALUES ?",
-            //     [values],
-            //     (err) => {
-            //       if (err) {
-            //         return res.status(500).json({
-            //           message: "Lỗi lưu danh sách người tham gia",
-            //           error: err,
-            //         });
-            //       }
-            //       return res.status(200).json({
-            //         message: "Sự kiện đã được tạo",
-            //       });
-            //     }
-            //   );
-            // }
-            // res.status(200).json({
-            //   message: "Sự kiện đã được tạo",
-            // });
           }
         );
       }
@@ -234,7 +252,7 @@ export const listEventByUser = (req, res) => {
 };
 
 export const updateEvent = (req, res) => {
-  const { id, title, description, start_time, end_time, accessToken } =
+  const { id, title, description, start_time, end_time, accessToken, emails } =
     req.body;
 
   if (accessToken) {
@@ -313,42 +331,87 @@ export const updateEvent = (req, res) => {
             dateTime: new Date(end_time).toISOString(),
             timeZone: "Asia/Ho_Chi_Minh",
           },
+          attendees: emails.map((email) => ({
+            email,
+            responseStatus: "accepted",
+          })),
         },
+        sendUpdates: "all",
       });
 
       if (response.status === 200) {
         // Nếu cập nhật trên Google thành công, cập nhật cả database
-        if (googleEventId === response.data.id) {
-          db.query(
-            "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
-            [title, description, start_time, end_time, id],
-            (err) => {
-              if (err) {
-                return res
-                  .status(500)
-                  .json({ message: "Cập nhật database thất bại", error: err });
-              }
-              res.status(200).json({
-                message: "Cập nhật thành công trên Google và database!",
+        db.query(
+          "DELETE FROM event_attendees WHERE event_id = ?",
+          [id],
+          (err) => {
+            if (err) {
+              return res.status(500).json({
+                message: "Lỗi khi xoá attendees cũ trong database",
+                error: err,
               });
             }
-          );
-        } else {
-          db.query(
-            "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ?  WHERE id = ?",
-            [title, description, start_time, end_time, response.data.id, id],
-            (err) => {
-              if (err) {
-                return res
-                  .status(500)
-                  .json({ message: "Cập nhật database thất bại", error: err });
-              }
-              res.status(200).json({
-                message: "Cập nhật thành công trên Google và database!",
-              });
+            if (googleEventId === response.data.id) {
+              db.query(
+                "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
+                [title, description, start_time, end_time, id],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({
+                      message: "Cập nhật database thất bại",
+                      error: err,
+                    });
+                  }
+                  res.status(200).json({
+                    message: "Cập nhật thành công trên Google và database!",
+                  });
+                }
+              );
+            } else {
+              db.query(
+                "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ?  WHERE id = ?",
+                [
+                  title,
+                  description,
+                  start_time,
+                  end_time,
+                  response.data.id,
+                  id,
+                ],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({
+                      message: "Cập nhật database thất bại",
+                      error: err,
+                    });
+                  }
+                  res.status(200).json({
+                    message: "Cập nhật thành công trên Google và database!",
+                  });
+                }
+              );
             }
-          );
-        }
+            if (emails.length > 0) {
+              const values = emails.map((email) => [id, email, "accepted"]);
+
+              db.query(
+                "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                [values],
+                (err) => {
+                  if (err) {
+                    return res.status(500).json({
+                      message: "Lỗi lưu danh sách người tham gia",
+                      error: err,
+                    });
+                  }
+                  res.status(200).json({
+                    message: "Sự kiện đã được tạo",
+                  });
+                }
+              );
+            }
+          }
+        );
       } else {
         res.status(500).json({ message: "Lỗi cập nhật Google Calendar" });
       }
@@ -427,20 +490,63 @@ export const deleteEvent = (req, res) => {
 
 export const getDetailRecurringEvent = (req, res) => {
   const id = req.params.id;
-  db.query(
-    "SELECT * FROM recurring_events WHERE id = ?",
-    [id],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json({ message: "Lỗi truy vấn database" });
-      }
-      if (result) {
-        res
-          .status(200)
-          .json({ message: "Lấy sự kiện lặp thành công", data: result[0] });
-      }
+
+  // Truy vấn thông tin sự kiện theo ID
+  db.query("SELECT * FROM event WHERE id = ?", [id], (err, eventResult) => {
+    if (err) {
+      return res.status(500).json({ message: "Lỗi truy vấn database (event)" });
     }
-  );
+
+    if (!eventResult.length) {
+      return res.status(404).json({ message: "Không tìm thấy sự kiện" });
+    }
+
+    const event = eventResult[0];
+
+    // Truy vấn thông tin recurring_event
+    db.query(
+      "SELECT * FROM recurring_events WHERE id = ?",
+      [event.recurring_id],
+      (err, recurringResult) => {
+        if (err) {
+          return res
+            .status(500)
+            .json({ message: "Lỗi truy vấn database (recurring_event)" });
+        }
+
+        if (!recurringResult.length) {
+          return res
+            .status(404)
+            .json({ message: "Không tìm thấy sự kiện lặp" });
+        }
+
+        const recurringEvent = recurringResult[0];
+
+        // Truy vấn danh sách người được chia sẻ sự kiện
+        db.query(
+          "SELECT email FROM event_attendees WHERE event_id = ?",
+          [id],
+          (err, attendees) => {
+            if (err) {
+              return res
+                .status(500)
+                .json({ message: "Lỗi truy vấn database (attendees)" });
+            }
+
+            const shareEmails = attendees.map((a) => a.email);
+
+            return res.status(200).json({
+              message: "Lấy sự kiện lặp thành công",
+              data: {
+                ...recurringEvent,
+                share_email: shareEmails,
+              },
+            });
+          }
+        );
+      }
+    );
+  });
 };
 
 export const deleteRecurringEvent = (req, res) => {
@@ -534,7 +640,7 @@ export const deleteRecurringEvent = (req, res) => {
   });
 };
 
-const insertCalendarToGoogle = async (type, event) => {
+const insertCalendarToGoogle = async (type, event, emails = []) => {
   const calendar = google.calendar({
     version: "v3",
     auth: oauth2Client,
@@ -553,10 +659,12 @@ const insertCalendarToGoogle = async (type, event) => {
       timeZone: "Asia/Ho_Chi_Minh",
     },
     recurrence: type === "none" ? undefined : [recurrenceRule],
+    attendees: emails.map((email) => ({ email, responseStatus: "accepted" })),
   };
   const response = await calendar.events.insert({
     calendarId: "primary",
     resource: googleEvent,
+    sendUpdates: "all",
   });
   return response.data.id;
 };
@@ -572,6 +680,7 @@ export const updateRecurringEvent = (req, res) => {
     end_time,
     id,
     accessToken,
+    emails,
   } = req.body;
 
   if (accessToken) {
@@ -601,6 +710,19 @@ export const updateRecurringEvent = (req, res) => {
         const oldFrequency = results[0].frequency;
 
         // Nếu cần xóa sự kiện cũ trước khi cập nhật
+        const deleteOldEmailAttendees = () => {
+          return new Promise((resolve, reject) => {
+            db.query(
+              "DELETE FROM event_attendees WHERE event_id = ?",
+              [id],
+              (err) => {
+                if (err) return reject(err);
+                resolve("Xóa sự kiện thành công!");
+              }
+            );
+          });
+        };
+
         const deleteOldEvents = () => {
           return new Promise((resolve, reject) => {
             db.query(
@@ -677,14 +799,40 @@ export const updateRecurringEvent = (req, res) => {
               (err, result) => {
                 if (err) reject(err);
                 else {
-                  events.push({
-                    id: result.insertId,
-                    title,
-                    start_time: new Date(start_time),
-                    end_time: new Date(end_time),
-                  });
+                  if (emails.length > 0 && accessToken) {
+                    const values = emails.map((email) => [
+                      result.insertId,
+                      email,
+                      "accepted",
+                    ]);
 
-                  return Promise.resolve(events);
+                    db.query(
+                      "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                      [values],
+                      (err) => {
+                        if (err) {
+                          reject(err)
+                        }
+                        events.push({
+                          id: result.insertId,
+                          title,
+                          start_time: new Date(start_time),
+                          end_time: new Date(end_time),
+                        });
+
+                        return Promise.resolve(events);
+                      }
+                    );
+                  } else {
+                    events.push({
+                      id: result.insertId,
+                      title,
+                      start_time: new Date(start_time),
+                      end_time: new Date(end_time),
+                    });
+
+                    return Promise.resolve(events);
+                  }
                 }
               }
             );
@@ -731,13 +879,38 @@ export const updateRecurringEvent = (req, res) => {
                 (err, result) => {
                   if (err) reject(err);
                   else {
-                    events.push({
-                      id: result.insertId,
-                      title,
-                      start_time: startDate,
-                      end_time: endDate,
-                    });
-                    resolve();
+                    if (emails.length > 0 && accessToken) {
+                      const values = emails.map((email) => [
+                        result.insertId,
+                        email,
+                        "accepted",
+                      ]);
+
+                      db.query(
+                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                        [values],
+                        (err) => {
+                          if (err) {
+                            reject(err)
+                          }
+                          events.push({
+                            id: result.insertId,
+                            title,
+                            start_time: startDate,
+                            end_time: endDate,
+                          });
+                          resolve();
+                        }
+                      );
+                    } else {
+                      events.push({
+                        id: result.insertId,
+                        title,
+                        start_time: startDate,
+                        end_time: endDate,
+                      });
+                      resolve();
+                    }
                   }
                 }
               );
@@ -835,6 +1008,7 @@ export const updateRecurringEvent = (req, res) => {
 
               (async () => {
                 try {
+                  await deleteOldEmailAttendees();
                   if (oldFrequency !== frequency) {
                     await deleteOldEvents();
                     await updateRecurringEvent();
@@ -852,7 +1026,8 @@ export const updateRecurringEvent = (req, res) => {
                           start_time: currentEvent.start_time,
                           end_time: currentEvent.end_time,
                           recurringId,
-                        }
+                        },
+                        emails
                       );
                       db.query(
                         "UPDATE event SET synced = 1, google_event_id = ? WHERE recurring_id = ?",
@@ -897,14 +1072,44 @@ export const updateRecurringEvent = (req, res) => {
                                 dateTime: new Date(end_time).toISOString(),
                                 timeZone: "Asia/Ho_Chi_Minh",
                               },
+                              attendees: emails.map((email) => ({
+                                email,
+                                responseStatus: "accepted",
+                              })),
                               recurrence: originalEvent.data.recurrence, //Giữ nguyên RRULE
                             },
+                            sendUpdates: "all",
                           });
                           if (response.status === 200) {
                             updateEvent();
-                            res.json({
-                              message: "Cập nhật sự kiện thành công!",
-                            });
+                            if (emails.length > 0) {
+                              const values = emails.map((email) => [
+                                id,
+                                email,
+                                "accepted",
+                              ]);
+
+                              db.query(
+                                "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                [values],
+                                (err) => {
+                                  if (err) {
+                                    return res.status(500).json({
+                                      message:
+                                        "Lỗi lưu danh sách người tham gia",
+                                      error: err,
+                                    });
+                                  }
+                                  return res.json({
+                                    message: "Cập nhật sự kiện thành công!",
+                                  });
+                                }
+                              );
+                            } else {
+                              return res.json({
+                                message: "Cập nhật sự kiện thành công!",
+                              });
+                            }
                           } else {
                             res.status(500).json({
                               message: "Lỗi cập nhật Google Calendar",

@@ -27,6 +27,7 @@ export const loginGoogle = (req, res) => {
       const scopes = [
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/calendar.events",
       ];
       let authUrl = oauth2Client.generateAuthUrl({
         access_type: "offline",
@@ -366,8 +367,10 @@ export const webhookGoogle = async (req, res) => {
             const filterfetchedEvent = events.filter((item) =>
               updateEventEtagId.includes(item?.etag)
             );
-            const findItemUpdateInDatabase = existingEvents.find(
-              (item) => item?.google_event_id === filterfetchedEvent[0]?.id
+            const listIdUpdate = filterfetchedEvent?.map((item) => item.id);
+
+            const findItemUpdateInDatabase = existingEvents.find((item) =>
+              listIdUpdate.includes(item?.google_event_id)
             );
             console.log("event=============", events);
             if (newEventIds.length > 0) {
