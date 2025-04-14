@@ -276,8 +276,8 @@ export const updateEvent = (req, res) => {
 
     const googleEventId = result[0]?.google_event_id;
 
+    // Nếu không có Google Event, chỉ cập nhật trong database
     if (!googleEventId) {
-      // Nếu sự kiện không liên kết với Google, chỉ cập nhật database
       return db.query(
         "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
         [title, description, start_time, end_time, id],
@@ -287,7 +287,7 @@ export const updateEvent = (req, res) => {
               .status(500)
               .json({ message: "Cập nhật database thất bại", error: err });
           }
-          res
+          return res
             .status(200)
             .json({ message: "Cập nhật thành công trong database!" });
         }
@@ -296,18 +296,18 @@ export const updateEvent = (req, res) => {
 
     try {
       const calendar = google.calendar({ version: "v3", auth: oauth2Client });
-      // Lấy danh sách instances để tìm event cần cập nhật
+
       const instances = await calendar.events.instances({
         calendarId: "primary",
         eventId: googleEventId,
       });
+
       if (!instances.data.items || instances.data.items.length === 0) {
         return res
           .status(404)
           .json({ message: "Không tìm thấy instance của sự kiện" });
       }
 
-      // Tìm instance có thời gian bắt đầu trùng với database
       const instanceToUpdate = instances.data.items.find((event) => {
         const eventStart = new Date(event.start.dateTime).getTime();
         const dbStart = new Date(result[0]?.start_time).getTime();
@@ -320,7 +320,6 @@ export const updateEvent = (req, res) => {
           .json({ message: "Không tìm thấy instance phù hợp để cập nhật" });
       }
 
-      // Cập nhật sự kiện trên Google Calendar
       const response = await calendar.events.patch({
         calendarId: "primary",
         eventId: instanceToUpdate?.id || result[0]?.instance_id,
@@ -344,7 +343,6 @@ export const updateEvent = (req, res) => {
       });
 
       if (response.status === 200) {
-        // Nếu cập nhật trên Google thành công, cập nhật cả database
         db.query(
           "DELETE FROM event_attendees WHERE event_id = ?",
           [id],
@@ -355,74 +353,67 @@ export const updateEvent = (req, res) => {
                 error: err,
               });
             }
-            if (googleEventId === response.data.id) {
-              db.query(
-                "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
-                [title, description, start_time, end_time, id],
-                (err) => {
-                  if (err) {
-                    return res.status(500).json({
-                      message: "Cập nhật database thất bại",
-                      error: err,
-                    });
-                  }
-                  res.status(200).json({
-                    message: "Cập nhật thành công trên Google và database!",
-                  });
-                }
-              );
-            } else {
-              db.query(
-                "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ?  WHERE id = ?",
-                [
-                  title,
-                  description,
-                  start_time,
-                  end_time,
-                  response.data.id,
-                  id,
-                ],
-                (err) => {
-                  if (err) {
-                    return res.status(500).json({
-                      message: "Cập nhật database thất bại",
-                      error: err,
-                    });
-                  }
-                  res.status(200).json({
-                    message: "Cập nhật thành công trên Google và database!",
-                  });
-                }
-              );
-            }
-            if (emails.length > 0) {
-              const values = emails.map((email) => [id, email, "accepted"]);
 
-              db.query(
-                "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                [values],
-                (err) => {
-                  if (err) {
-                    return res.status(500).json({
-                      message: "Lỗi lưu danh sách người tham gia",
-                      error: err,
+            const updateQuery =
+              googleEventId === response.data.id
+                ? "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?"
+                : "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ? WHERE id = ?";
+
+            const updateValues =
+              googleEventId === response.data.id
+                ? [title, description, start_time, end_time, id]
+                : [
+                    title,
+                    description,
+                    start_time,
+                    end_time,
+                    response.data.id,
+                    id,
+                  ];
+
+            db.query(updateQuery, updateValues, (err) => {
+              if (err) {
+                return res.status(500).json({
+                  message: "Cập nhật database thất bại",
+                  error: err,
+                });
+              }
+
+              if (emails.length > 0) {
+                const values = emails.map((email) => [id, email, "accepted"]);
+                db.query(
+                  "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                  [values],
+                  (err) => {
+                    if (err) {
+                      return res.status(500).json({
+                        message: "Lỗi lưu danh sách người tham gia",
+                        error: err,
+                      });
+                    }
+                    return res.status(200).json({
+                      message: "Cập nhật thành công trên Google và database!",
                     });
                   }
-                  res.status(200).json({
-                    message: "Sự kiện đã được tạo",
-                  });
-                }
-              );
-            }
+                );
+              } else {
+                return res.status(200).json({
+                  message: "Cập nhật thành công trên Google và database!",
+                });
+              }
+            });
           }
         );
       } else {
-        res.status(500).json({ message: "Lỗi cập nhật Google Calendar" });
+        return res
+          .status(500)
+          .json({ message: "Lỗi cập nhật Google Calendar" });
       }
     } catch (error) {
-      res
-        .status(500)
-        .json({ message: "Lỗi khi gọi Google API", error: error.message });
+      return res.status(500).json({
+        message: "Lỗi khi gọi Google API",
+        error: error.message,
+      });
     }
   });
 };
@@ -536,7 +527,6 @@ export const getDetailRecurringEvent = (req, res) => {
                 .status(500)
                 .json({ message: "Lỗi truy vấn database (attendees)" });
             }
-
             const shareEmails = attendees.map((a) => a.email);
 
             return res.status(200).json({
@@ -815,7 +805,7 @@ export const updateRecurringEvent = (req, res) => {
                       [values],
                       (err) => {
                         if (err) {
-                          reject(err)
+                          reject(err);
                         }
                         events.push({
                           id: result.insertId,
@@ -895,7 +885,7 @@ export const updateRecurringEvent = (req, res) => {
                         [values],
                         (err) => {
                           if (err) {
-                            reject(err)
+                            reject(err);
                           }
                           events.push({
                             id: result.insertId,

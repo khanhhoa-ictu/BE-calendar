@@ -275,7 +275,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://ceaf-117-1-95-251.ngrok-free.app/webhook",
+          "https://8b18-2405-4802-1bd8-fc10-d1de-5130-9069-f8f.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -325,7 +325,9 @@ export const webhookGoogle = async (req, res) => {
           singleEvents: false,
         });
 
-        const events = response.data.items;
+        const events = response.data.items?.filter(
+          (item) => item.eventType !== "birthday"
+        );
 
         db.query(
           "SELECT google_event_id, last_resource_id FROM event WHERE user_id = ?",
@@ -346,33 +348,42 @@ export const webhookGoogle = async (req, res) => {
             const convertEtagId = existingEventEtagId.map((item) =>
               item ? item?.match(/"(\d+)"/)[0] : ""
             );
+            // danh sách etagID trong database
             const newConvert = new Set(convertEtagId);
 
             // Danh sách ID sự kiện trên google
             const fetchedEventIds = events.map((event) => event.id); // Danh sách ID sự kiện từ Google Calendar API
-
+            // lọc những sự kiện có etag và bỏ quá những sự kiện trong chuỗi đã bị xoá
             const fetchedEventEtagId = events
               .map((event) => event?.etag)
               .filter((item) => item.status !== "cancelled");
-
+            // kiểm tra xem sự kiện không có trên google thì xoá trong database
             const deletedEventIds = existingEventIds.filter(
               (id) => !fetchedEventIds.includes(id)
             );
+            // kiêm tra nếu sự kiện có trên google calendar mà k có trong database thì thêm vào
             const newEventIds = fetchedEventIds.filter(
               (id) => !existingEventIds.includes(id)
             );
+            // lọc ra những etagId có trên google mà không có trong database
             const updateEventEtagId = fetchedEventEtagId?.filter(
               (id) => ![...newConvert].includes(id)
             );
-            const filterfetchedEvent = events.filter((item) =>
+            //loc sự kiện trên google calendar
+            const convetEventCalendar = events?.filter(
+              (item) => item.status !== "cancelled"
+            );
+            // tìm những sự kiện thay đổi trên google calendar
+            const filterfetchedEvent = convetEventCalendar.filter((item) =>
               updateEventEtagId.includes(item?.etag)
             );
+            // danh sách nhũng id update trên google calendar
             const listIdUpdate = filterfetchedEvent?.map((item) => item.id);
-
+            // tìm sự được sự kiện dag update trong database;
             const findItemUpdateInDatabase = existingEvents.find((item) =>
               listIdUpdate.includes(item?.google_event_id)
             );
-            console.log("event=============", events);
+
             if (newEventIds.length > 0) {
               let allEvents = [];
               const listEventDelete = [];
@@ -504,14 +515,38 @@ export const webhookGoogle = async (req, res) => {
                                           );
                                           return reject(err);
                                         }
-
-                                        allEvents.push({
-                                          id: result.insertId,
-                                          title: event.summary,
-                                          start_time: startDate,
-                                          end_time: endDate,
-                                        });
-                                        resolve();
+                                        const emails = event?.attendees?.map(
+                                          (item) => item?.email
+                                        );
+                                        if (emails.length > 0) {
+                                          const values = emails.map((email) => [
+                                            result.insertId,
+                                            email,
+                                            "accepted",
+                                          ]);
+                                          db.query(
+                                            "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                            [values],
+                                            (err) => {
+                                              if (err) return reject(err);
+                                              allEvents.push({
+                                                id: result.insertId,
+                                                title: event.summary,
+                                                start_time: startDate,
+                                                end_time: endDate,
+                                              });
+                                              resolve();
+                                            }
+                                          );
+                                        } else {
+                                          allEvents.push({
+                                            id: result.insertId,
+                                            title: event.summary,
+                                            start_time: startDate,
+                                            end_time: endDate,
+                                          });
+                                          resolve();
+                                        }
                                       }
                                     );
                                   });
@@ -547,8 +582,9 @@ export const webhookGoogle = async (req, res) => {
                                 const newMap = resultEvent?.map(
                                   (item) => item?.last_resource_id
                                 );
+
                                 const isExist = newMap.some((etag) =>
-                                  etag.startsWith(event?.etag)
+                                  etag?.startsWith(event?.etag)
                                 );
 
                                 if (isExist) {
@@ -571,18 +607,47 @@ export const webhookGoogle = async (req, res) => {
                                     event?.id,
                                     1,
                                   ],
-                                  (err) => {
+                                  (err, eventAdd) => {
                                     if (err)
                                       return reject("Lỗi lưu sự kiện vào DB");
-                                    allEvents.push({
-                                      id: event?.id,
-                                      title: event.summary,
-                                      start_time:
-                                        event?.start?.dateTime || new Date(),
-                                      end_time:
-                                        event?.start?.dateTime || new Date(),
-                                    });
-                                    resolve();
+                                    const emails = event?.attendees?.map(
+                                      (item) => item?.email
+                                    );
+                                    if (emails?.length > 0) {
+                                      const values = emails.map((email) => [
+                                        eventAdd.insertId,
+                                        email,
+                                        "accepted",
+                                      ]);
+                                      db.query(
+                                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                        [values],
+                                        (err) => {
+                                          if (err) return reject(err);
+                                          allEvents.push({
+                                            id: eventAdd?.insertId,
+                                            title: event.summary,
+                                            start_time:
+                                              event?.start?.dateTime ||
+                                              new Date(),
+                                            end_time:
+                                              event?.start?.dateTime ||
+                                              new Date(),
+                                          });
+                                          resolve();
+                                        }
+                                      );
+                                    } else {
+                                      allEvents.push({
+                                        id: event?.id,
+                                        title: event.summary,
+                                        start_time:
+                                          event?.start?.dateTime || new Date(),
+                                        end_time:
+                                          event?.start?.dateTime || new Date(),
+                                      });
+                                      resolve();
+                                    }
                                   }
                                 );
                               }
@@ -630,18 +695,16 @@ export const webhookGoogle = async (req, res) => {
             //update
             if (updateEventEtagId.length > 0 && findItemUpdateInDatabase) {
               const itemUpdate = filterfetchedEvent[0];
-
               const result = await new Promise((resolve, reject) => {
                 db.query(
                   "SELECT * FROM event WHERE google_event_id = ?",
-                  [itemUpdate.id],
+                  [itemUpdate?.id],
                   (err, result) => {
                     if (err) return reject(err);
                     resolve(result);
                   }
                 );
               });
-
               const oldRecurring = await new Promise((resolve, reject) => {
                 db.query(
                   "SELECT * FROM recurring_events WHERE id = ?",
@@ -662,7 +725,6 @@ export const webhookGoogle = async (req, res) => {
                   : "none";
 
                 //  Lấy danh sách các event còn lại trong chuỗi
-                console.log("frequency==================", frequency);
                 if (frequency === oldRecurring[0]?.frequency) {
                   // khong thay doi recurring
                   await Promise.all(
