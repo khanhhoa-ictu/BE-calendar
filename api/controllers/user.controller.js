@@ -12,7 +12,6 @@ cloudinary.config({
   api_secret: "zvdEWEfrF38a2dLOtVp-3BulMno",
 });
 
-
 export const register = async (req, res) => {
   if (
     typeof req.body.email === "undefined" ||
@@ -28,22 +27,18 @@ export const register = async (req, res) => {
     return;
   }
   password = bcrypt.hashSync(password, 10);
-  db.query(
-    "SELECT * FROM user WHERE email = ?",
-    [email],
-    (err, result) => {
-      if (err) {
-        console.log(err);
-      }
-      if (result) {
-        let user = result[0];
-        if (!!user) {
-          res.status(422).json({ message: "email đã tồn tại" });
-          return;
-        }
+  db.query("SELECT * FROM user WHERE email = ?", [email], (err, result) => {
+    if (err) {
+      console.log(err);
+    }
+    if (result) {
+      let user = result[0];
+      if (!!user) {
+        res.status(422).json({ message: "email đã tồn tại" });
+        return;
       }
     }
-  );
+  });
   const role = roleAccount.USER;
   db.query(
     "INSERT INTO user (email, password, role) VALUES (?,?,?)",
@@ -62,42 +57,38 @@ export const register = async (req, res) => {
 export const login = (req, res) => {
   const { email, password } = req.body;
 
-  db.query(
-    "SELECT * FROM user where email = ?",
-    [email],
-    (err, result) => {
-      if (err) {
-        console.log(err);
-      }
-      if (result) {
-        const user = { id: result[0]?.id, email: result[0]?.email };
-        if (!user.id) {
-          res
-            .status(422)
-            .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
-          return;
-        }
-        if (!bcrypt.compareSync(password, result[0].password)) {
-          res
-            .status(422)
-            .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
-          return;
-        }
-
-        let token = jwt.sign(
-          {
-            email: email,
-            role: result.role,
-            iat: Math.floor(Date.now() / 1000) - 60 * 30,
-          },
-          "secret",
-          { expiresIn: "1d" }
-        );
-       
-        res.send({ token, user });
-      }
+  db.query("SELECT * FROM user where email = ?", [email], (err, result) => {
+    if (err) {
+      console.log(err);
     }
-  );
+    if (result) {
+      const user = { id: result[0]?.id, email: result[0]?.email };
+      if (!user.id) {
+        res
+          .status(422)
+          .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
+        return;
+      }
+      if (!bcrypt.compareSync(password, result[0].password)) {
+        res
+          .status(422)
+          .json({ message: "Tài khoản hoặc mật khẩu không chính xác" });
+        return;
+      }
+
+      let token = jwt.sign(
+        {
+          email: email,
+          role: result.role,
+          iat: Math.floor(Date.now() / 1000) - 60 * 30,
+        },
+        "secret",
+        { expiresIn: "1d" }
+      );
+
+      res.send({ token, user });
+    }
+  });
 };
 
 export const refreshToken = (req, res) => {
@@ -153,11 +144,9 @@ export const profile = (req, res) => {
       }
     );
   } catch (error) {
-    res.status(401).send({message: "token hết hạn"});
+    res.status(401).send({ message: "token hết hạn" });
   }
 };
-
-
 
 export const requestForgotPassword = async (req, res) => {
   if (typeof req.body.email === "undefined") {
@@ -221,7 +210,7 @@ export const verifyForgotPassword = (req, res) => {
 
   db.query("select * from user where email=?", [email], (err, result) => {
     if (err) {
-       res.status(422).json({ message: "không tồn tại email hợp lệ" });
+      res.status(422).json({ message: "không tồn tại email hợp lệ" });
     }
     if (result) {
       userFind = result[0];
@@ -265,13 +254,16 @@ export const forgotPassword = async (req, res) => {
 
 export const getUserEmails = (req, res) => {
   const userId = req.params.id;
-  const sql = "SELECT id, email FROM user WHERE id != ?";
+  const sql = "SELECT id, google_email FROM user WHERE id != ?";
 
   db.query(sql, [userId], (err, results) => {
     if (err) {
-      return res.status(500).json({ message: "Lỗi khi lấy danh sách email", error: err });
+      return res
+        .status(500)
+        .json({ message: "Lỗi khi lấy danh sách email", error: err });
     }
-    res.status(200).json({ users: results });
+    res
+      .status(200)
+      .json({ users: results.filter((item) => item.google_email) });
   });
 };
-
