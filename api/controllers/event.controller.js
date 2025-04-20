@@ -72,7 +72,7 @@ export const addEvent = async (req, res) => {
                       const values = emails.map((email) => [
                         insertedId,
                         email,
-                        "accepted",
+                        "needsAction",
                       ]);
                       db.query(
                         "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
@@ -176,7 +176,6 @@ export const addEvent = async (req, res) => {
                 recurrence: frequency === "none" ? undefined : [recurrenceRule],
                 attendees: emails.map((email) => ({
                   email,
-                  responseStatus: "accepted",
                 })),
               };
               const response = await calendar.events.insert({
@@ -201,7 +200,7 @@ export const addEvent = async (req, res) => {
                       const values = emails.map((email) => [
                         insertedId,
                         email,
-                        "accepted",
+                        "needsAction",
                       ]);
 
                       db.query(
@@ -239,21 +238,200 @@ export const addEvent = async (req, res) => {
   );
 };
 
+export const respondToEvent = (req, res) => {
+  const { event_id, email, response_status, accessToken } = req.body;
+  if (accessToken) {
+    oauth2Client.setCredentials({ access_token: accessToken });
+  }
+  if (!event_id || !email || !response_status || !accessToken) {
+    return res
+      .status(400)
+      .json({ message: "Thiếu dữ liệu phản hồi hoặc accessToken" });
+  }
+
+  const validStatuses = ["accepted", "declined", "tentative"];
+  if (!validStatuses.includes(response_status)) {
+    return res.status(400).json({ message: "Trạng thái không hợp lệ" });
+  }
+
+  // Bắt đầu cập nhật vào database
+  const query = `
+    UPDATE event_attendees
+    SET response_status = ?
+    WHERE event_id = ? AND email = ?
+  `;
+
+  db.query(query, [response_status, event_id, email], (err, result) => {
+    if (err) {
+      console.error("Lỗi cập nhật phản hồi:", err);
+      return res.status(500).json({ message: "Lỗi server" });
+    }
+
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy người được mời trong sự kiện" });
+    }
+
+    // Sau khi cập nhật DB, tiến hành đồng bộ lên Google Calendar
+    db.query(
+      "SELECT google_event_id FROM event WHERE id = ?",
+      [event_id],
+      async (err, eventResult) => {
+        if (err || !eventResult.length || !eventResult[0].google_event_id) {
+          return res
+            .status(200)
+            .json({
+              message:
+                "Phản hồi thành công (không đồng bộ được Google Calendar)",
+            });
+        }
+
+        const google_event_id = eventResult[0].google_event_id;
+
+        // Lấy danh sách tất cả attendee để cập nhật lại toàn bộ attendees
+        db.query(
+          "SELECT email, response_status FROM event_attendees WHERE event_id = ?",
+          [event_id],
+          async (err, attendees) => {
+            if (err) {
+              console.error("Lỗi lấy attendees:", err);
+              return res
+                .status(500)
+                .json({ message: "Lỗi lấy danh sách người tham gia" });
+            }
+
+            // Đồng bộ lên Google Calendar
+            try {
+              const calendar = google.calendar({
+                version: "v3",
+                auth: oauth2Client,
+              });
+
+              const response = await calendar.events.patch({
+                calendarId: "primary",
+                eventId: google_event_id,
+                resource: {
+                  attendees: attendees.map((att) => ({
+                    email: att.email,
+                    responseStatus: att.response_status,
+                  })),
+                },
+                sendUpdates: "all",
+              });
+
+              if (response.status === 200) {
+                return res
+                  .status(200)
+                  .json({
+                    message:
+                      "Phản hồi thành công và đã đồng bộ Google Calendar",
+                  });
+              } else {
+                return res
+                  .status(200)
+                  .json({
+                    message:
+                      "Phản hồi thành công (Google Calendar không phản hồi OK)",
+                  });
+              }
+            } catch (err) {
+              console.error("Lỗi đồng bộ Google Calendar:", err.message);
+              return res
+                .status(200)
+                .json({
+                  message:
+                    "Phản hồi thành công (lỗi khi đồng bộ Google Calendar)",
+                });
+            }
+          }
+        );
+      }
+    );
+  });
+};
+
 export const listEventByUser = (req, res) => {
-  const user_id = req.params.user_id;
+  const user_id = Number(req.params.user_id);
+
+  // Lấy google_email của người dùng hiện tại
   db.query(
-    "SELECT * FROM event where user_id = ?",
+    "SELECT google_email FROM user WHERE id = ?",
     [user_id],
-    (err, result) => {
-      if (err) {
-        res.status(500).json({ message: "Lỗi server!" });
+    (err, userResult) => {
+      if (err || userResult.length === 0) {
+        return res
+          .status(500)
+          .json({ message: "Không tìm thấy người dùng", error: err });
       }
-      if (result) {
-        res.status(200).json({ data: result, message: "thành công" });
-      }
+
+      const google_email = userResult[0].google_email;
+
+      // Truy vấn sự kiện của người dùng hoặc được chia sẻ
+      const query = `
+        SELECT 
+          e.id AS event_id,
+          e.user_id AS owner_id,
+          e.title,
+          e.description,
+          e.start_time,
+          e.end_time,
+          e.recurring_id,
+          ea.email AS attendee_email,
+          ea.response_status
+        FROM event e
+        LEFT JOIN event_attendees ea ON e.id = ea.event_id
+        WHERE e.user_id = ? OR ea.email = ?
+      `;
+
+      db.query(query, [user_id, google_email], (err, results) => {
+        if (err) {
+          return res.status(500).json({ message: "Lỗi server!", error: err });
+        }
+
+        const eventMap = new Map();
+        results.forEach((row) => {
+          if (!eventMap.has(row.event_id)) {
+            // Tạo sự kiện mới nếu chưa tồn tại
+            eventMap.set(row.event_id, {
+              id: row.event_id,
+              title: row.title,
+              description: row.description,
+              start_time: row.start_time,
+              end_time: row.end_time,
+              recurring_id: row.recurring_id,
+              can_edit: row.owner_id === user_id,
+              attendees: row.attendee_email
+                ? [{
+                    email: row.attendee_email,
+                    response_status: row.response_status,
+                  }]
+                : [],
+            });
+          } else {
+            // Nếu sự kiện đã tồn tại, chỉ thêm attendee nếu có
+            if (row.attendee_email) {
+              const event = eventMap.get(row.event_id);
+              event.attendees.push({
+                email: row.attendee_email,
+                response_status: row.response_status,
+              });
+            }
+          }
+        });
+
+        const data = Array.from(eventMap.values());
+        res.status(200).json({
+          message: "Thành công",
+          data,
+        });
+      });
     }
   );
 };
+
+
+
 
 export const updateEvent = (req, res) => {
   const { id, title, description, start_time, end_time, accessToken, emails } =
@@ -336,7 +514,7 @@ export const updateEvent = (req, res) => {
           },
           attendees: emails.map((email) => ({
             email,
-            responseStatus: "accepted",
+            responseStatus: "needsAction",
           })),
         },
         sendUpdates: "all",
@@ -380,7 +558,11 @@ export const updateEvent = (req, res) => {
               }
 
               if (emails.length > 0) {
-                const values = emails.map((email) => [id, email, "accepted"]);
+                const values = emails.map((email) => [
+                  id,
+                  email,
+                  "needsAction",
+                ]);
                 db.query(
                   "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
                   [values],
@@ -653,7 +835,7 @@ const insertCalendarToGoogle = async (type, event, emails = []) => {
       timeZone: "Asia/Ho_Chi_Minh",
     },
     recurrence: type === "none" ? undefined : [recurrenceRule],
-    attendees: emails.map((email) => ({ email, responseStatus: "accepted" })),
+    attendees: emails.map((email) => ({ email })),
   };
   const response = await calendar.events.insert({
     calendarId: "primary",
@@ -797,7 +979,7 @@ export const updateRecurringEvent = (req, res) => {
                     const values = emails.map((email) => [
                       result.insertId,
                       email,
-                      "accepted",
+                      "needsAction",
                     ]);
 
                     db.query(
@@ -877,7 +1059,7 @@ export const updateRecurringEvent = (req, res) => {
                       const values = emails.map((email) => [
                         result.insertId,
                         email,
-                        "accepted",
+                        "needsAction",
                       ]);
 
                       db.query(
@@ -1068,7 +1250,6 @@ export const updateRecurringEvent = (req, res) => {
                               },
                               attendees: emails.map((email) => ({
                                 email,
-                                responseStatus: "accepted",
                               })),
                               recurrence: originalEvent.data.recurrence, //Giữ nguyên RRULE
                             },
@@ -1080,7 +1261,7 @@ export const updateRecurringEvent = (req, res) => {
                               const values = emails.map((email) => [
                                 id,
                                 email,
-                                "accepted",
+                                "needsAction",
                               ]);
 
                               db.query(

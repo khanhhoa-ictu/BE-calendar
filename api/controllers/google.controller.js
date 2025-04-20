@@ -275,7 +275,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://8b18-2405-4802-1bd8-fc10-d1de-5130-9069-f8f.ngrok-free.app/webhook",
+          "https://d1b9-2405-4802-1bf0-39f0-fd2b-8056-306d-c180.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -290,9 +290,8 @@ export const registerWebhook = async (req, res) => {
 export const webhookGoogle = async (req, res) => {
   try {
     const userEmail = req.headers["x-goog-channel-token"]; // Kiểm tra nếu bạn đã lưu token theo email
-
     db.query(
-      "SELECT access_token_google, refresh_token_google, id FROM user WHERE email = ?",
+      "SELECT access_token_google, refresh_token_google,google_email, id FROM user WHERE email = ?",
       [userEmail],
       async (err, results) => {
         if (err) {
@@ -305,7 +304,8 @@ export const webhookGoogle = async (req, res) => {
             .json({ error: "Không tìm thấy token cho user này" });
         }
 
-        const { access_token_google, refresh_token_google } = results[0];
+        const { access_token_google, refresh_token_google, google_email } =
+          results[0];
 
         // Thiết lập OAuth2 Client với token
         oauth2Client.setCredentials({
@@ -387,7 +387,6 @@ export const webhookGoogle = async (req, res) => {
             if (newEventIds.length > 0) {
               let allEvents = [];
               const listEventDelete = [];
-
               const eventPromises = events.map((event, index) => {
                 return new Promise(async (resolve, reject) => {
                   if (event.status === "cancelled") {
@@ -519,11 +518,13 @@ export const webhookGoogle = async (req, res) => {
                                           (item) => item?.email
                                         );
                                         if (emails.length > 0) {
-                                          const values = emails.map((email) => [
-                                            result.insertId,
-                                            email,
-                                            "accepted",
-                                          ]);
+                                          const values = event?.attendees.map(
+                                            (item) => [
+                                              result.insertId,
+                                              item.email,
+                                              item.responseStatus,
+                                            ]
+                                          );
                                           db.query(
                                             "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
                                             [values],
@@ -594,62 +595,70 @@ export const webhookGoogle = async (req, res) => {
                                   return resolve();
                                 }
 
-                                db.query(
-                                  "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                  [
-                                    results[0]?.id,
-                                    `${event.etag}-1`,
-                                    event.summary,
-                                    event?.start?.dateTime || new Date(),
-                                    event?.end?.dateTime || new Date(),
-                                    event.description || "",
-                                    recurringId,
-                                    event?.id,
-                                    1,
-                                  ],
-                                  (err, eventAdd) => {
-                                    if (err)
-                                      return reject("Lỗi lưu sự kiện vào DB");
-                                    const emails = event?.attendees?.map(
-                                      (item) => item?.email
-                                    );
-                                    if (emails?.length > 0) {
-                                      const values = emails.map((email) => [
-                                        eventAdd.insertId,
-                                        email,
-                                        "accepted",
-                                      ]);
-                                      db.query(
-                                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                                        [values],
-                                        (err) => {
-                                          if (err) return reject(err);
-                                          allEvents.push({
-                                            id: eventAdd?.insertId,
-                                            title: event.summary,
-                                            start_time:
-                                              event?.start?.dateTime ||
-                                              new Date(),
-                                            end_time:
-                                              event?.start?.dateTime ||
-                                              new Date(),
-                                          });
-                                          resolve();
-                                        }
+                                if (google_email === event.creator?.email) {
+                                  db.query(
+                                    "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                    [
+                                      results[0]?.id,
+                                      `${event.etag}-1`,
+                                      event.summary,
+                                      event?.start?.dateTime || new Date(),
+                                      event?.end?.dateTime || new Date(),
+                                      event.description || "",
+                                      recurringId,
+                                      event?.id,
+                                      1,
+                                    ],
+                                    (err, eventAdd) => {
+                                      if (err)
+                                        return reject("Lỗi lưu sự kiện vào DB");
+                                      const emails = event?.attendees?.map(
+                                        (item) => item?.email
                                       );
-                                    } else {
-                                      allEvents.push({
-                                        id: event?.id,
-                                        title: event.summary,
-                                        start_time:
-                                          event?.start?.dateTime || new Date(),
-                                        end_time:
-                                          event?.start?.dateTime || new Date(),
-                                      });
-                                      resolve();
+                                      if (emails?.length > 0) {
+                                        const values = event?.attendees.map(
+                                          (item) => [
+                                            eventAdd.insertId,
+                                            item.email,
+                                            item.responseStatus,
+                                          ]
+                                        );
+                                        db.query(
+                                          "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                          [values],
+                                          (err) => {
+                                            if (err) return reject(err);
+                                            allEvents.push({
+                                              id: eventAdd?.insertId,
+                                              title: event.summary,
+                                              start_time:
+                                                event?.start?.dateTime ||
+                                                new Date(),
+                                              end_time:
+                                                event?.start?.dateTime ||
+                                                new Date(),
+                                            });
+                                            resolve();
+                                          }
+                                        );
+                                      } else {
+                                        allEvents.push({
+                                          id: event?.id,
+                                          title: event.summary,
+                                          start_time:
+                                            event?.start?.dateTime ||
+                                            new Date(),
+                                          end_time:
+                                            event?.start?.dateTime ||
+                                            new Date(),
+                                        });
+                                        resolve();
+                                      }
                                     }
-                                  }
-                                );
+                                  );
+                                } else {
+                                  return resolve();
+                                }
                               }
                             );
                           }
@@ -716,7 +725,10 @@ export const webhookGoogle = async (req, res) => {
                 );
               });
 
-              if (itemUpdate?.recurrence || oldRecurring.frequency !== "none") {
+              if (
+                itemUpdate?.recurrence ||
+                (oldRecurring.frequency && oldRecurring.frequency !== "none")
+              ) {
                 // update list event
                 const frequency = itemUpdate?.recurrence
                   ? itemUpdate?.recurrence[0]
@@ -785,8 +797,49 @@ export const webhookGoogle = async (req, res) => {
                     `${itemUpdate.etag}-1`,
                     itemUpdate.id,
                   ],
-                  (err) => {
-                    if (err) console.error("Lỗi lưu sự kiện vào DB:", err);
+                  (err, result) => {
+                    if (err) {
+                      console.error("Lỗi lưu sự kiện vào DB:", err);
+                      return;
+                    }
+
+                    const attendees = itemUpdate?.attendees || [];
+
+                    attendees.forEach((attendee) => {
+                      if (attendee.email) {
+                        db.query(
+                          "SELECT * from event WHERE google_event_id = ?",
+                          [itemUpdate.id],
+                          (error, result) => {
+                            if (error) {
+                              console.error(
+                                `Lỗi cập nhật response_status cho ${attendee.email}:`,
+                                err
+                              );
+                            }
+                            console.log(result[0]);
+                            db.query(
+                              "UPDATE event_attendees SET response_status = ? WHERE event_id = ? AND email = ?",
+                              [
+                                attendee.responseStatus,
+                                result[0].id,
+                                attendee.email,
+                              ],
+                              (err) => {
+                                if (err) {
+                                  console.error(
+                                    `Lỗi cập nhật response_status cho ${attendee.email}:`,
+                                    err
+                                  );
+                                }
+                              }
+                            );
+                          }
+                        );
+                      }
+                    });
+
+                    console.log("Cập nhật sự kiện và attendees thành công");
                   }
                 );
               }
