@@ -5,6 +5,7 @@ import {
   deleteRecurringEvent,
   getDetailRecurringEvent,
   listEventByUser,
+  respondToEvent,
   updateEvent,
   updateRecurringEvent,
 } from "./../controllers/event.controller.js";
@@ -18,5 +19,5 @@ router.delete("/event/delete-event/:id/:accessToken", deleteEvent);
 router.get("/recurring-events/:id", getDetailRecurringEvent);
 router.delete("/recurring-events/:id/:accessToken", deleteRecurringEvent);
 router.put("/recurring-events/:id", updateRecurringEvent);
-
+router.post("/event/respond", respondToEvent)
 export default router;
