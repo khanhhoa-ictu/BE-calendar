@@ -1,13 +1,18 @@
 import express from "express";
 import {
   addEvent,
+  createPoll,
   deleteEvent,
   deleteRecurringEvent,
+  finalizePoll,
   getDetailRecurringEvent,
   listEventByUser,
+  listPollEvents,
+  pollDetail,
   respondToEvent,
   updateEvent,
   updateRecurringEvent,
+  vote,
 } from "./../controllers/event.controller.js";
 
 const router = express.Router();
@@ -20,4 +25,15 @@ router.get("/recurring-events/:id", getDetailRecurringEvent);
 router.delete("/recurring-events/:id/:accessToken", deleteRecurringEvent);
 router.put("/recurring-events/:id", updateRecurringEvent);
 router.post("/event/respond", respondToEvent)
+
+//meeting
+router.get("/meeting-poll/:pollId", listPollEvents);
+router.post("/meeting-poll", createPoll);
+router.get("/meeting-poll/:pollId", pollDetail);
+router.post("/meeting-poll/:option_id/finalize", finalizePoll);
+router.post("/meeting-poll/:pollId/vote", vote);
+
+
+
+
 export default router;
