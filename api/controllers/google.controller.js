@@ -264,7 +264,6 @@ export const registerWebhook = async (req, res) => {
   try {
     const { accessToken, email } = req.body;
     oauth2Client.setCredentials({ access_token: accessToken });
-
     const calendar = google.calendar({ version: "v3", auth: oauth2Client });
 
     const webhookId = `webhook-${Date.now()}`; // Sử dụng timestamp để tạo ID duy nhất
@@ -275,7 +274,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://63e9-2405-4802-1bd5-db80-e073-781-52a3-2275.ngrok-free.app/webhook",
+          "https://0dcd-2405-4802-1bd5-db80-651e-7adb-42dd-312e.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -294,7 +293,8 @@ const updateEvent = async (
   title,
   description,
   etag,
-  id
+  id,
+  itemUpdate = "",
 ) => {
   try {
     db.query(
@@ -352,7 +352,36 @@ const updateEvent = async (
               ],
               (updateErr, updateResult) => {
                 if (updateErr) reject(updateErr);
-                else resolve(updateResult);
+                const attendees = itemUpdate?.attendees || [];
+
+                db.query(
+                  "DELETE FROM event_attendees WHERE event_id = ?",
+                  [event.id],
+                  (err) => {
+                    if (err) {
+                      reject(err);
+                    }
+                    if (attendees.length > 0) {
+                      const values = attendees.map((attendee) => [
+                        event.id,
+                        attendee?.email,
+                        attendee?.responseStatus,
+                      ]);
+                      db.query(
+                        "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                        [values],
+                        (err) => {
+                          if (err) {
+                            reject(err);
+                          }
+                          resolve();
+                        }
+                      );
+                    } else {
+                      resolve();
+                    }
+                  }
+                );
               }
             );
           });
@@ -370,6 +399,8 @@ const updateEvent = async (
 export const webhookGoogle = async (req, res) => {
   try {
     const userEmail = req.headers["x-goog-channel-token"]; // Kiểm tra nếu bạn đã lưu token theo email
+    console.log(userEmail);
+
     db.query(
       "SELECT access_token_google, refresh_token_google,google_email, id FROM user WHERE email = ?",
       [userEmail],
@@ -834,70 +865,9 @@ export const webhookGoogle = async (req, res) => {
                     itemUpdate.summary,
                     itemUpdate.description,
                     itemUpdate.etag,
-                    result[0].id
+                    result[0].id,
+                    itemUpdate,
                   );
-                  const attendees = itemUpdate?.attendees || [];
-                  db.query(
-                    "DELETE FROM event_attendees WHERE event_id = ?",
-                    [findItemUpdateInDatabase?.id],
-                    (err) => {
-                      if (err) {
-                        return res.status(500).json({
-                          message: "Lỗi khi xoá attendees cũ trong database",
-                          error: err,
-                        });
-                      }
-                      if (attendees.length > 0) {
-                        const values = attendees.map((attendee) => [
-                          findItemUpdateInDatabase?.id,
-                          attendee?.email,
-                          attendee?.responseStatus,
-                        ]);
-                        db.query(
-                          "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                          [values],
-                          (err) => {
-                            if (err) {
-                              return res.status(500).json({
-                                message: "Lỗi lưu danh sách người tham gia",
-                                error: err,
-                              });
-                            }
-                            return res.status(200).json({
-                              message:
-                                "Cập nhật thành công trên Google và database!",
-                            });
-                          }
-                        );
-                      } else {
-                        return res.status(200).json({
-                          message:
-                            "Cập nhật thành công trên Google và database!",
-                        });
-                      }
-                    }
-                  );
-                  // await Promise.all(
-                  //   result.map(async (item, index) => {
-                  //     await new Promise((resolve, reject) => {
-                  //       db.query(
-                  //         "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE last_resource_id = ?",
-                  //         [
-                  //           itemUpdate.summary,
-                  //           itemUpdate.start.dateTime,
-                  //           itemUpdate.end.dateTime,
-                  //           itemUpdate.description,
-                  //           `${itemUpdate.etag}-${index}`,
-                  //           item.last_resource_id,
-                  //         ],
-                  //         (err, result) => {
-                  //           if (err) return reject(err);
-                  //           resolve();
-                  //         }
-                  //       );
-                  //     });
-                  //   })
-                  // );
                 } else {
                   // thay doi recurring
                   const listevents = await new Promise((resolve, reject) => {
