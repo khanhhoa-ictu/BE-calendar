@@ -354,6 +354,103 @@ export const respondToEvent = (req, res) => {
   });
 };
 
+
+export const respondToEventRecurring = (req, res) => {
+  const { event_id, email, response_status, accessToken } = req.body;
+
+  if (accessToken) {
+    oauth2Client.setCredentials({ access_token: accessToken });
+  }
+
+  if (!event_id || !email || !response_status || !accessToken) {
+    return res
+      .status(400)
+      .json({ message: "Thiếu dữ liệu phản hồi hoặc accessToken" });
+  }
+
+  const validStatuses = ["accepted", "declined", "tentative"];
+  if (!validStatuses.includes(response_status)) {
+    return res.status(400).json({ message: "Trạng thái không hợp lệ" });
+  }
+
+  // Truy vấn để lấy recurring_id và google_event_id
+  const eventInfoQuery = `SELECT recurring_id, google_event_id FROM event WHERE id = ?`;
+
+  db.query(eventInfoQuery, [event_id], (err, eventResult) => {
+    if (err || !eventResult.length) {
+      return res.status(500).json({ message: "Không tìm thấy sự kiện", error: err });
+    }
+
+    const { recurring_id, google_event_id } = eventResult[0];
+
+    // Lấy danh sách tất cả các sự kiện thuộc cùng recurring_id
+    const getEventsQuery = recurring_id
+      ? "SELECT id FROM event WHERE recurring_id = ?"
+      : "SELECT id FROM event WHERE id = ?";
+
+    const param = recurring_id ? [recurring_id] : [event_id];
+
+    db.query(getEventsQuery, param, async (err, allEvents) => {
+      if (err) {
+        return res.status(500).json({ message: "Lỗi truy vấn danh sách sự kiện", error: err });
+      }
+
+      const eventIds = allEvents.map(e => e.id);
+
+      // Cập nhật trạng thái trong bảng event_attendees
+      const updateQuery = `
+        UPDATE event_attendees
+        SET response_status = ?
+        WHERE email = ? AND event_id IN (?)
+      `;
+
+      db.query(updateQuery, [response_status, email, eventIds], async (err, result) => {
+        if (err) {
+          return res.status(500).json({ message: "Lỗi cập nhật phản hồi", error: err });
+        }
+
+        // Lấy danh sách attendees để đồng bộ lên Google Calendar (chỉ cần cho 1 event đại diện)
+        const attendeesQuery = `SELECT email, response_status FROM event_attendees WHERE event_id = ?`;
+        db.query(attendeesQuery, [event_id], async (err, attendees) => {
+          if (err) {
+            return res.status(500).json({ message: "Lỗi khi lấy attendees", error: err });
+          }
+
+          try {
+            const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+
+            const response = await calendar.events.patch({
+              calendarId: "primary",
+              eventId: google_event_id,
+              resource: {
+                attendees: attendees.map((att) => ({
+                  email: att.email,
+                  responseStatus: att.response_status,
+                })),
+              },
+              sendUpdates: "all",
+            });
+
+            return res.status(200).json({
+              message:
+                response.status === 200
+                  ? "Phản hồi thành công và đã đồng bộ Google Calendar"
+                  : "Phản hồi thành công (Google không phản hồi OK)",
+            });
+          } catch (err) {
+            console.error("Lỗi đồng bộ Google Calendar:", err.message);
+            return res.status(200).json({
+              message: "Phản hồi thành công (lỗi khi đồng bộ Google Calendar)",
+            });
+          }
+        });
+      });
+    });
+  });
+};
+
+
+
 export const listEventByUser = (req, res) => {
   const user_id = Number(req.params.user_id);
 
@@ -1330,7 +1427,7 @@ export const listPollEvents = (req, res) => {
       pe.start_time,
       pe.end_time,
       COUNT(pv.user_email) AS vote_count
-    FROM poll_events pe
+    FROM meeting_poll pe
     LEFT JOIN poll_votes pv ON pe.id = pv.event_id
     WHERE pe.poll_id = ?
     GROUP BY pe.id
@@ -1356,18 +1453,17 @@ export const listPollEvents = (req, res) => {
 //Tạo poll mới
 export const createPoll =  (req, res) => {
   const { title, description, created_by, options } = req.body;
-
   db.query(
-    "INSERT INTO meeting_poll (title, description, created_by, created_at, is_finalized) VALUES (?, ?, ?, NOW(), false)",
+    "INSERT INTO meeting_poll (title, description, created_by, created_at, finalized_event_id) VALUES (?, ?, ?, NOW(), false)",
     [title, description, created_by],
     (err, result) => {
       if (err) return res.status(500).json({ message: "Lỗi tạo poll", error: err });
 
       const pollId = result.insertId;
-      const values = options.map(opt => [pollId, opt.start_time, opt.end_time, false]);
-
+      const values = options.map(opt => [pollId, opt.start_time, opt.end_time]);
+      console.log(values)
       db.query(
-        "INSERT INTO poll_options (poll_id, start_time, end_time, selected) VALUES ?",
+        "INSERT INTO poll_options (poll_id, start_time, end_time) VALUES ?",
         [values],
         (err2) => {
           if (err2) return res.status(500).json({ message: "Lỗi thêm lựa chọn", error: err2 });
@@ -1381,7 +1477,6 @@ export const createPoll =  (req, res) => {
 // Xem chi tiết poll + tổng số lượt vote mỗi option
 export const pollDetail = (req, res) => {
   const pollId = req.params.pollId;
-
   db.query("SELECT * FROM meeting_poll WHERE id = ?", [pollId], (err, polls) => {
     if (err || polls.length === 0) return res.status(404).json({ message: "Không tìm thấy poll" });
 

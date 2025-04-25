@@ -10,6 +10,7 @@ import {
   listPollEvents,
   pollDetail,
   respondToEvent,
+  respondToEventRecurring,
   updateEvent,
   updateRecurringEvent,
   vote,
@@ -25,10 +26,12 @@ router.get("/recurring-events/:id", getDetailRecurringEvent);
 router.delete("/recurring-events/:id/:accessToken", deleteRecurringEvent);
 router.put("/recurring-events/:id", updateRecurringEvent);
 router.post("/event/respond", respondToEvent)
+router.post("/event/respond/recurring", respondToEventRecurring)
+
 
 //meeting
-router.get("/meeting-poll/:pollId", listPollEvents);
-router.post("/meeting-poll", createPoll);
+// router.get("/meeting-poll/:pollId", listPollEvents);
+router.post("/meeting-poll/create", createPoll);
 router.get("/meeting-poll/:pollId", pollDetail);
 router.post("/meeting-poll/:option_id/finalize", finalizePoll);
 router.post("/meeting-poll/:pollId/vote", vote);
