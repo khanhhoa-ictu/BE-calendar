@@ -354,7 +354,6 @@ export const respondToEvent = (req, res) => {
   });
 };
 
-
 export const respondToEventRecurring = (req, res) => {
   const { event_id, email, response_status, accessToken } = req.body;
 
@@ -378,7 +377,9 @@ export const respondToEventRecurring = (req, res) => {
 
   db.query(eventInfoQuery, [event_id], (err, eventResult) => {
     if (err || !eventResult.length) {
-      return res.status(500).json({ message: "Không tìm thấy sự kiện", error: err });
+      return res
+        .status(500)
+        .json({ message: "Không tìm thấy sự kiện", error: err });
     }
 
     const { recurring_id, google_event_id } = eventResult[0];
@@ -392,10 +393,12 @@ export const respondToEventRecurring = (req, res) => {
 
     db.query(getEventsQuery, param, async (err, allEvents) => {
       if (err) {
-        return res.status(500).json({ message: "Lỗi truy vấn danh sách sự kiện", error: err });
+        return res
+          .status(500)
+          .json({ message: "Lỗi truy vấn danh sách sự kiện", error: err });
       }
 
-      const eventIds = allEvents.map(e => e.id);
+      const eventIds = allEvents.map((e) => e.id);
 
       // Cập nhật trạng thái trong bảng event_attendees
       const updateQuery = `
@@ -404,52 +407,62 @@ export const respondToEventRecurring = (req, res) => {
         WHERE email = ? AND event_id IN (?)
       `;
 
-      db.query(updateQuery, [response_status, email, eventIds], async (err, result) => {
-        if (err) {
-          return res.status(500).json({ message: "Lỗi cập nhật phản hồi", error: err });
-        }
-
-        // Lấy danh sách attendees để đồng bộ lên Google Calendar (chỉ cần cho 1 event đại diện)
-        const attendeesQuery = `SELECT email, response_status FROM event_attendees WHERE event_id = ?`;
-        db.query(attendeesQuery, [event_id], async (err, attendees) => {
+      db.query(
+        updateQuery,
+        [response_status, email, eventIds],
+        async (err, result) => {
           if (err) {
-            return res.status(500).json({ message: "Lỗi khi lấy attendees", error: err });
+            return res
+              .status(500)
+              .json({ message: "Lỗi cập nhật phản hồi", error: err });
           }
 
-          try {
-            const calendar = google.calendar({ version: "v3", auth: oauth2Client });
+          // Lấy danh sách attendees để đồng bộ lên Google Calendar (chỉ cần cho 1 event đại diện)
+          const attendeesQuery = `SELECT email, response_status FROM event_attendees WHERE event_id = ?`;
+          db.query(attendeesQuery, [event_id], async (err, attendees) => {
+            if (err) {
+              return res
+                .status(500)
+                .json({ message: "Lỗi khi lấy attendees", error: err });
+            }
 
-            const response = await calendar.events.patch({
-              calendarId: "primary",
-              eventId: google_event_id,
-              resource: {
-                attendees: attendees.map((att) => ({
-                  email: att.email,
-                  responseStatus: att.response_status,
-                })),
-              },
-              sendUpdates: "all",
-            });
+            try {
+              const calendar = google.calendar({
+                version: "v3",
+                auth: oauth2Client,
+              });
 
-            return res.status(200).json({
-              message:
-                response.status === 200
-                  ? "Phản hồi thành công và đã đồng bộ Google Calendar"
-                  : "Phản hồi thành công (Google không phản hồi OK)",
-            });
-          } catch (err) {
-            console.error("Lỗi đồng bộ Google Calendar:", err.message);
-            return res.status(200).json({
-              message: "Phản hồi thành công (lỗi khi đồng bộ Google Calendar)",
-            });
-          }
-        });
-      });
+              const response = await calendar.events.patch({
+                calendarId: "primary",
+                eventId: google_event_id,
+                resource: {
+                  attendees: attendees.map((att) => ({
+                    email: att.email,
+                    responseStatus: att.response_status,
+                  })),
+                },
+                sendUpdates: "all",
+              });
+
+              return res.status(200).json({
+                message:
+                  response.status === 200
+                    ? "Phản hồi thành công và đã đồng bộ Google Calendar"
+                    : "Phản hồi thành công (Google không phản hồi OK)",
+              });
+            } catch (err) {
+              console.error("Lỗi đồng bộ Google Calendar:", err.message);
+              return res.status(200).json({
+                message:
+                  "Phản hồi thành công (lỗi khi đồng bộ Google Calendar)",
+              });
+            }
+          });
+        }
+      );
     });
   });
 };
-
-
 
 export const listEventByUser = (req, res) => {
   const user_id = Number(req.params.user_id);
@@ -476,6 +489,7 @@ export const listEventByUser = (req, res) => {
           e.description,
           e.start_time,
           e.end_time,
+          e.status,
           e.recurring_id,
           ea.email AS attendee_email,
           ea.response_status
@@ -496,6 +510,7 @@ export const listEventByUser = (req, res) => {
             eventMap.set(row.event_id, {
               id: row.event_id,
               title: row.title,
+              status:row.status,
               description: row.description,
               start_time: row.start_time,
               end_time: row.end_time,
@@ -1449,86 +1464,356 @@ export const listPollEvents = (req, res) => {
   });
 };
 
-
 //Tạo poll mới
-export const createPoll =  (req, res) => {
+export const createPoll = (req, res) => {
   const { title, description, created_by, options } = req.body;
   db.query(
     "INSERT INTO meeting_poll (title, description, created_by, created_at, finalized_event_id) VALUES (?, ?, ?, NOW(), false)",
     [title, description, created_by],
     (err, result) => {
-      if (err) return res.status(500).json({ message: "Lỗi tạo poll", error: err });
+      if (err)
+        return res.status(500).json({ message: "Lỗi tạo poll", error: err });
 
       const pollId = result.insertId;
-      const values = options.map(opt => [pollId, opt.start_time, opt.end_time]);
-      console.log(values)
+      const values = options.map((opt) => [
+        pollId,
+        opt.start_time,
+        opt.end_time,
+      ]);
+      console.log(values);
       db.query(
         "INSERT INTO poll_options (poll_id, start_time, end_time) VALUES ?",
         [values],
         (err2) => {
-          if (err2) return res.status(500).json({ message: "Lỗi thêm lựa chọn", error: err2 });
+          if (err2)
+            return res
+              .status(500)
+              .json({ message: "Lỗi thêm lựa chọn", error: err2 });
           res.status(200).json({ message: "Tạo poll thành công", pollId });
         }
       );
     }
   );
-}
+};
 
 // Xem chi tiết poll + tổng số lượt vote mỗi option
 export const pollDetail = (req, res) => {
   const pollId = req.params.pollId;
-  db.query("SELECT * FROM meeting_poll WHERE id = ?", [pollId], (err, polls) => {
-    if (err || polls.length === 0) return res.status(404).json({ message: "Không tìm thấy poll" });
+  db.query(
+    "SELECT * FROM meeting_poll WHERE id = ?",
+    [pollId],
+    (err, polls) => {
+      if (err || polls.length === 0)
+        return res.status(404).json({ message: "Không tìm thấy poll" });
 
-    db.query(
-      `SELECT po.*, COUNT(pv.id) AS vote_count FROM poll_options po
+      db.query(
+        `SELECT po.*, COUNT(pv.id) AS vote_count FROM poll_options po
        LEFT JOIN poll_votes pv ON po.id = pv.option_id
        WHERE po.poll_id = ? GROUP BY po.id`,
-      [pollId],
-      (err2, options) => {
-        if (err2) return res.status(500).json({ message: "Lỗi truy vấn options", error: err2 });
+        [pollId],
+        (err2, options) => {
+          if (err2)
+            return res
+              .status(500)
+              .json({ message: "Lỗi truy vấn options", error: err2 });
 
-        res.status(200).json({ poll: polls[0], options });
-      }
-    );
-  });
-}
+          res.status(200).json({ poll: polls[0], options });
+        }
+      );
+    }
+  );
+};
 
 // 3. Vote lựa chọn
 export const vote = (req, res) => {
   const { email, option_ids } = req.body;
 
-  const values = option_ids.map(id => [id, email, new Date()]);
+  if (!email || !option_ids || option_ids.length === 0) {
+    return res.status(400).json({ message: "Thiếu dữ liệu vote" });
+  }
+
+  // 1. Kiểm tra xem user có google_email không
   db.query(
-    "INSERT INTO poll_votes (option_id, email, voted_at) VALUES ?",
-    [values],
-    (err) => {
-      if (err) return res.status(500).json({ message: "Lỗi vote", error: err });
-      res.status(200).json({ message: "Vote thành công" });
+    "SELECT google_email FROM user WHERE email = ?",
+    [email],
+    (errUser, userResult) => {
+      if (errUser) {
+        return res.status(500).json({
+          message: "Lỗi server khi kiểm tra người dùng",
+          error: errUser,
+        });
+      }
+
+      if (userResult.length === 0 || !userResult[0].google_email) {
+        return res.status(400).json({
+          message: "Tài khoản của bạn chưa liên kết Google. Không thể vote!",
+        });
+      }
+
+      // 2. Lấy poll_id từ 1 option bất kỳ (vì tất cả option_ids đều thuộc 1 poll)
+      const firstOptionId = option_ids[0];
+
+      db.query(
+        "SELECT poll_id FROM poll_options WHERE id = ?",
+        [firstOptionId],
+        (errOption, optionResult) => {
+          if (errOption || optionResult.length === 0) {
+            return res.status(404).json({ message: "Không tìm thấy option" });
+          }
+
+          const pollId = optionResult[0].poll_id;
+
+          // 3. Kiểm tra xem email đã vote trong poll này chưa
+          db.query(
+            `SELECT pv.id FROM poll_votes pv
+             JOIN poll_options po ON pv.option_id = po.id
+             WHERE po.poll_id = ? AND pv.voter_email = ?`,
+            [pollId, email],
+            (errVote, voteCheck) => {
+              if (errVote) {
+                return res
+                  .status(500)
+                  .json({ message: "Lỗi kiểm tra vote", error: errVote });
+              }
+
+              if (voteCheck.length > 0) {
+                return res
+                  .status(400)
+                  .json({ message: "Bạn đã vote rồi, không thể vote lại!" });
+              }
+
+              // 4. Nếu chưa vote, cho phép lưu
+              const values = option_ids.map((id) => [id, email, new Date()]);
+              db.query(
+                "INSERT INTO poll_votes (option_id, voter_email, created_at) VALUES ?",
+                [values],
+                (errInsert) => {
+                  if (errInsert) {
+                    return res
+                      .status(500)
+                      .json({ message: "Lỗi khi lưu vote", error: errInsert });
+                  }
+                  res.status(200).json({ message: "Vote thành công!" });
+                }
+              );
+            }
+          );
+        }
+      );
     }
   );
-}
+};
 
+export const finalizePoll = (req, res) => {
+  const { poll_id, created_by } = req.body;
 
-export const finalizePoll =  (req, res) => {
-  const { option_id } = req.body;
+  if (!poll_id || !created_by) {
+    return res.status(400).json({ message: "Thiếu dữ liệu cần thiết" });
+  }
 
-  db.query(
-    "UPDATE poll_options SET selected = false WHERE poll_id = (SELECT poll_id FROM poll_options WHERE id = ?)",
-    [option_id],
-    (err) => {
-      if (err) return res.status(500).json({ message: "Lỗi cập nhật poll", error: err });
+  db.beginTransaction((err) => {
+    if (err) {
+      return res
+        .status(500)
+        .json({ message: "Lỗi bắt đầu transaction", error: err });
+    }
 
-      db.query("UPDATE poll_options SET selected = true WHERE id = ?", [option_id], (err2) => {
-        if (err2) return res.status(500).json({ message: "Lỗi chọn lịch", error: err2 });
+    // 1. Lấy thông tin poll
+    db.query(
+      "SELECT * FROM meeting_poll WHERE id = ?",
+      [poll_id],
+      (errPoll, pollResult) => {
+        if (errPoll || pollResult.length === 0) {
+          return db.rollback(() => {
+            res
+              .status(500)
+              .json({ message: "Không tìm thấy poll", error: errPoll });
+          });
+        }
 
+        const poll = pollResult[0]; // { title, description }
+
+        // 2. Tìm option có nhiều vote nhất
         db.query(
-          "UPDATE meeting_poll SET is_finalized = true WHERE id = (SELECT poll_id FROM poll_options WHERE id = ?)",
-          [option_id]
-        );
+          `SELECT po.*, COUNT(pv.id) AS vote_count
+         FROM poll_options po
+         LEFT JOIN poll_votes pv ON po.id = pv.option_id
+         WHERE po.poll_id = ?
+         GROUP BY po.id
+         ORDER BY vote_count DESC
+         LIMIT 1`,
+          [poll_id],
+          (errOption, results) => {
+            if (errOption || results.length === 0) {
+              return db.rollback(() => {
+                res.status(500).json({
+                  message: "Không tìm thấy lựa chọn phù hợp",
+                  error: errOption,
+                });
+              });
+            }
 
-        res.status(200).json({ message: "Chốt lịch thành công" });
-      });
+            const topOption = results[0];
+
+            // 3. Lấy danh sách người đã vote
+            db.query(
+              `SELECT DISTINCT u.google_email FROM poll_votes pv
+                JOIN poll_options po ON pv.option_id = po.id
+                JOIN user u ON pv.voter_email = u.email
+                WHERE po.poll_id = ?`,
+              [poll_id],
+              (errVoters, voterList) => {
+                if (errVoters) {
+                  return db.rollback(() => {
+                    res.status(500).json({
+                      message: "Lỗi lấy danh sách người vote",
+                      error: errVoters,
+                    });
+                  });
+                }
+
+                const attendees = voterList
+                  .filter((voter) => voter.google_email) // bỏ những thằng NULL
+                  .map((voter) => ({
+                    email: voter.google_email,
+                    responseStatus: "needsAction",
+                  }));
+
+                // 4. Đặt poll finalized
+                db.query(
+                  "UPDATE meeting_poll SET finalized_event_id = true WHERE id = ?",
+                  [poll_id],
+                  (errFinalize) => {
+                    if (errFinalize) {
+                      return db.rollback(() => {
+                        res.status(500).json({
+                          message: "Lỗi cập nhật trạng thái finalized",
+                          error: errFinalize,
+                        });
+                      });
+                    }
+
+                    // 5. Tạo sự kiện mới
+                    db.query(
+                      "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
+                      ["none", 1],
+                      (err, result) => {
+                        if (err) {
+                          return res.status(442).json({
+                            message:
+                              "Thêm sự kiện thất bại, vui lòng kiểm tra lại",
+                          });
+                        }
+                        if (result) {
+                          const recurringId = result.insertId;
+                          db.query(
+                            "INSERT INTO event (user_id, title, start_time, end_time, description, recurring_id, status) VALUES (?, ?, ?, ?, ?,?, ?)",
+                            [
+                              created_by,
+                              poll.title,
+                              topOption.start_time,
+                              topOption.end_time,
+                              poll.description,
+                              recurringId,
+                              "meeting",
+                            ],
+                            (errEvent, eventResult) => {
+                              if (errEvent) {
+                                return db.rollback(() => {
+                                  res.status(500).json({
+                                    message: "Lỗi tạo sự kiện",
+                                    error: errEvent,
+                                  });
+                                });
+                              }
+
+                              const eventId = eventResult.insertId;
+
+                              // 6. Thêm người tham gia vào event_attendees
+                              if (attendees.length > 0) {
+                                const values = attendees.map((att) => [
+                                  eventId,
+                                  att.email,
+                                  att.responseStatus,
+                                ]);
+
+                                db.query(
+                                  "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                  [values],
+                                  (errInsert) => {
+                                    if (errInsert) {
+                                      return db.rollback(() => {
+                                        res.status(500).json({
+                                          message: "Lỗi lưu người tham gia",
+                                          error: errInsert,
+                                        });
+                                      });
+                                    }
+
+                                    db.commit((errCommit) => {
+                                      if (errCommit) {
+                                        return db.rollback(() => {
+                                          res.status(500).json({
+                                            message: "Lỗi commit transaction",
+                                            error: errCommit,
+                                          });
+                                        });
+                                      }
+
+                                      res.status(200).json({
+                                        message:
+                                          "Chốt lịch, tạo sự kiện và chia sẻ thành công!",
+                                      });
+                                    });
+                                  }
+                                );
+                              } else {
+                                db.commit((errCommit) => {
+                                  if (errCommit) {
+                                    return db.rollback(() => {
+                                      res.status(500).json({
+                                        message: "Lỗi commit transaction",
+                                        error: errCommit,
+                                      });
+                                    });
+                                  }
+                                  res.status(200).json({
+                                    message:
+                                      "Chốt lịch và tạo sự kiện thành công (không có người chia sẻ)",
+                                  });
+                                });
+                              }
+                            }
+                          );
+                        }
+                      }
+                    );
+                  }
+                );
+              }
+            );
+          }
+        );
+      }
+    );
+  });
+};
+
+export const updatePoll = (req, res) => {
+  const { poll_id, title, description } = req.body;
+
+  if (!poll_id || !title) {
+    return res.status(400).json({ message: "Thiếu dữ liệu cần thiết" });
+  }
+
+  db.query(
+    `UPDATE meeting_poll SET title = ?, description = ?  WHERE id = ?`,
+    [title, description, poll_id],
+    (err, result) => {
+      if (err) {
+        return res.status(500).json({ message: "Lỗi server", error: err });
+      }
+      return res.status(200).json({ message: "Cập nhật poll thành công" });
     }
   );
-}
+};
