@@ -12,6 +12,7 @@ import {
   respondToEvent,
   respondToEventRecurring,
   updateEvent,
+  updatePoll,
   updateRecurringEvent,
   vote,
 } from "./../controllers/event.controller.js";
@@ -33,8 +34,10 @@ router.post("/event/respond/recurring", respondToEventRecurring)
 // router.get("/meeting-poll/:pollId", listPollEvents);
 router.post("/meeting-poll/create", createPoll);
 router.get("/meeting-poll/:pollId", pollDetail);
-router.post("/meeting-poll/:option_id/finalize", finalizePoll);
+router.post("/meeting-poll/finalize", finalizePoll);
 router.post("/meeting-poll/:pollId/vote", vote);
+router.post("/meeting-poll/update", updatePoll);
+
 
 
 
