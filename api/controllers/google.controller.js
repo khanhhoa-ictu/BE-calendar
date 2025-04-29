@@ -274,7 +274,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://0dcd-2405-4802-1bd5-db80-651e-7adb-42dd-312e.ngrok-free.app/webhook",
+          "https://c96e-2405-4802-1bd4-1540-7946-a643-f82c-ad92.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -632,7 +632,7 @@ export const webhookGoogle = async (req, res) => {
                                         const emails = event?.attendees?.map(
                                           (item) => item?.email
                                         );
-                                        if (emails.length > 0) {
+                                        if (emails?.length > 0) {
                                           const values = event?.attendees.map(
                                             (item) => [
                                               result.insertId,

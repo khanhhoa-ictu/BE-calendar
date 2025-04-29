@@ -61,7 +61,7 @@ export const deleteUser = (req, res) => {
       }
       if (result) {
         user = result[0];
-        if (user.role !== roleAccount.ADMIN) {
+        if (Number(user.role) !== roleAccount.ADMIN) {
           return res.status(403).json("bạn không có quyền");
         }
         db.query("DELETE FROM user WHERE id=?", [id], (err, result) => {

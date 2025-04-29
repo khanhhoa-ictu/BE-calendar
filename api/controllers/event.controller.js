@@ -510,7 +510,7 @@ export const listEventByUser = (req, res) => {
             eventMap.set(row.event_id, {
               id: row.event_id,
               title: row.title,
-              status:row.status,
+              status: row.status,
               description: row.description,
               start_time: row.start_time,
               end_time: row.end_time,
@@ -1636,12 +1636,11 @@ export const finalizePoll = (req, res) => {
         // 2. Tìm option có nhiều vote nhất
         db.query(
           `SELECT po.*, COUNT(pv.id) AS vote_count
-         FROM poll_options po
-         LEFT JOIN poll_votes pv ON po.id = pv.option_id
-         WHERE po.poll_id = ?
-         GROUP BY po.id
-         ORDER BY vote_count DESC
-         LIMIT 1`,
+           FROM poll_options po
+           LEFT JOIN poll_votes pv ON po.id = pv.option_id
+           WHERE po.poll_id = ?
+           GROUP BY po.id
+           ORDER BY vote_count DESC`,
           [poll_id],
           (errOption, results) => {
             if (errOption || results.length === 0) {
@@ -1653,7 +1652,14 @@ export const finalizePoll = (req, res) => {
               });
             }
 
-            const topOption = results[0];
+            const highestVote = results[0].vote_count;
+            const topOptions = results.filter(
+              (opt) => opt.vote_count === highestVote
+            );
+
+            // 3. Random 1 option trong các topOptions
+            const randomIndex = Math.floor(Math.random() * topOptions.length);
+            const selectedOption = topOptions[randomIndex];
 
             // 3. Lấy danh sách người đã vote
             db.query(
@@ -1711,8 +1717,8 @@ export const finalizePoll = (req, res) => {
                             [
                               created_by,
                               poll.title,
-                              topOption.start_time,
-                              topOption.end_time,
+                              selectedOption.start_time,
+                              selectedOption.end_time,
                               poll.description,
                               recurringId,
                               "meeting",
