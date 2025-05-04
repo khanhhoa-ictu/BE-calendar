@@ -274,7 +274,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://c96e-2405-4802-1bd4-1540-7946-a643-f82c-ad92.ngrok-free.app/webhook",
+          "https://e69d-2405-4802-1bd4-1540-2498-5e8c-446f-b010.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -399,8 +399,6 @@ const updateEvent = async (
 export const webhookGoogle = async (req, res) => {
   try {
     const userEmail = req.headers["x-goog-channel-token"]; // Kiểm tra nếu bạn đã lưu token theo email
-    console.log(userEmail);
-
     db.query(
       "SELECT access_token_google, refresh_token_google,google_email, id FROM user WHERE email = ?",
       [userEmail],
@@ -854,7 +852,6 @@ export const webhookGoogle = async (req, res) => {
                       ?.match(/FREQ=([^;]+)/)[1]
                       ?.toLowerCase()
                   : "none";
-                console.log(oldRecurring[0]);
                 //  Lấy danh sách các event còn lại trong chuỗi
                 if (frequency === oldRecurring[0]?.frequency) {
                   // khong thay doi recurring

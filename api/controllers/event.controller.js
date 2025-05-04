@@ -490,6 +490,7 @@ export const listEventByUser = (req, res) => {
           e.start_time,
           e.end_time,
           e.status,
+          e.meet_link,
           e.recurring_id,
           ea.email AS attendee_email,
           ea.response_status
@@ -516,6 +517,7 @@ export const listEventByUser = (req, res) => {
               end_time: row.end_time,
               recurring_id: row.recurring_id,
               can_edit: row.owner_id === user_id,
+              meet_link: row.meet_link,
               attendees: row.attendee_email
                 ? [
                     {
@@ -1604,9 +1606,27 @@ export const vote = (req, res) => {
   );
 };
 
-export const finalizePoll = (req, res) => {
-  const { poll_id, created_by } = req.body;
+const saveMeetingEventToDB = ({ eventID, meetLink }) => {
+  return new Promise((resolve, reject) => {
+    db.query(
+      `UPDATE event SET meet_link = ? WHERE id = ?`,
+      [meetLink, eventID],
+      (err, result) => {
+        if (err) {
+          console.error("Lỗi khi lưu sự kiện:", err);
+          return reject(err);
+        }
+        resolve(result);
+      }
+    );
+  });
+};
 
+export const finalizePoll = (req, res) => {
+  const { poll_id, created_by, accessToken } = req.body;
+  if (accessToken) {
+    oauth2Client.setCredentials({ access_token: accessToken });
+  }
   if (!poll_id || !created_by) {
     return res.status(400).json({ message: "Thiếu dữ liệu cần thiết" });
   }
@@ -1746,7 +1766,7 @@ export const finalizePoll = (req, res) => {
                                 db.query(
                                   "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
                                   [values],
-                                  (errInsert) => {
+                                  async (errInsert) => {
                                     if (errInsert) {
                                       return db.rollback(() => {
                                         res.status(500).json({
@@ -1755,22 +1775,94 @@ export const finalizePoll = (req, res) => {
                                         });
                                       });
                                     }
-
-                                    db.commit((errCommit) => {
-                                      if (errCommit) {
-                                        return db.rollback(() => {
-                                          res.status(500).json({
-                                            message: "Lỗi commit transaction",
-                                            error: errCommit,
-                                          });
-                                        });
-                                      }
-
-                                      res.status(200).json({
-                                        message:
-                                          "Chốt lịch, tạo sự kiện và chia sẻ thành công!",
-                                      });
+                                    const calendar = google.calendar({
+                                      version: "v3",
+                                      auth: oauth2Client,
                                     });
+
+                                    const googleEvent = {
+                                      summary: poll.title,
+                                      description: poll.description,
+                                      start: {
+                                        dateTime: new Date(
+                                          selectedOption.start_time
+                                        ).toISOString(),
+                                        timeZone: "Asia/Ho_Chi_Minh",
+                                      },
+                                      end: {
+                                        dateTime: new Date(
+                                          selectedOption.end_time
+                                        ).toISOString(),
+                                        timeZone: "Asia/Ho_Chi_Minh",
+                                      },
+                                      attendees: attendees.map((attendee) => ({
+                                        email: attendee.email,
+                                      })),
+                                      conferenceData: {
+                                        createRequest: {
+                                          requestId:
+                                            "meet-" + new Date().getTime(),
+                                          conferenceSolutionKey: {
+                                            type: "hangoutsMeet",
+                                          },
+                                        },
+                                      },
+                                    };
+                                    const response =
+                                      await calendar.events.insert({
+                                        calendarId: "primary",
+                                        resource: googleEvent,
+                                        sendUpdates: "all", // gửi thông báo mời tới attendees
+                                        conferenceDataVersion: 1,
+                                      });
+                                    console.log(
+                                      "data========",
+                                      JSON.stringify(
+                                        response.data.conferenceData
+                                      )
+                                    );
+                                    if (response.status === 200) {
+                                      const meetLink =
+                                        response.data.conferenceData?.entryPoints?.find(
+                                          (ep) => ep.entryPointType === "video"
+                                        )?.uri;
+                                      await saveMeetingEventToDB({
+                                        eventID: eventId,
+                                        meetLink,
+                                      });
+
+                                      db.commit((errCommit) => {
+                                        if (errCommit) {
+                                          return db.rollback(() => {
+                                            res.status(500).json({
+                                              message: "Lỗi commit transaction",
+                                              error: errCommit,
+                                            });
+                                          });
+                                        }
+
+                                        res.status(200).json({
+                                          message:
+                                            "Chốt lịch, tạo sự kiện và chia sẻ thành công!",
+                                        });
+                                      });
+                                    } else {
+                                      db.commit((errCommit) => {
+                                        if (errCommit) {
+                                          return db.rollback(() => {
+                                            res.status(500).json({
+                                              message: "Lỗi commit transaction",
+                                              error: errCommit,
+                                            });
+                                          });
+                                        }
+
+                                        res.status(422).json({
+                                          message:
+                                            "đồng bộ lên google calendar không thành công",
+                                        });
+                                      });
+                                    }
                                   }
                                 );
                               } else {
