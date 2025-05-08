@@ -1606,11 +1606,11 @@ export const vote = (req, res) => {
   );
 };
 
-const saveMeetingEventToDB = ({ eventID, meetLink }) => {
+const saveMeetingEventToDB = ({ eventID, meetLink, etag, id }) => {
   return new Promise((resolve, reject) => {
     db.query(
-      `UPDATE event SET meet_link = ? WHERE id = ?`,
-      [meetLink, eventID],
+      `UPDATE event SET meet_link = ?, last_resource_id = ?, google_event_id = ?  WHERE id = ?`,
+      [meetLink, etag, id, eventID],
       (err, result) => {
         if (err) {
           console.error("Lỗi khi lưu sự kiện:", err);
@@ -1817,9 +1817,7 @@ export const finalizePoll = (req, res) => {
                                       });
                                     console.log(
                                       "data========",
-                                      JSON.stringify(
-                                        response.data.conferenceData
-                                      )
+                                      response.data.etag
                                     );
                                     if (response.status === 200) {
                                       const meetLink =
@@ -1829,6 +1827,8 @@ export const finalizePoll = (req, res) => {
                                       await saveMeetingEventToDB({
                                         eventID: eventId,
                                         meetLink,
+                                        etag: response.data.etag,
+                                        id: response.data.id,
                                       });
 
                                       db.commit((errCommit) => {
