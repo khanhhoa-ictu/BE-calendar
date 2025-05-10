@@ -252,7 +252,16 @@ export const forgotPassword = async (req, res) => {
   });
 };
 
-export const getUserEmails = (req, res) => {
+export const profileById = (req, res) => {
+  const id = req.params.id;
+  db.query("SELECT * FROM user WHERE id=?", [id], (err, result) => {
+    if (err) {
+      res.status(422).json({ message: "không tìm thấy id" });
+    } else {
+      res.send(result[0]);
+    }
+  });
+};export const getUserEmails = (req, res) => {
   const userId = req.params.id;
   const sql = "SELECT id, google_email FROM user WHERE id != ?";
 
