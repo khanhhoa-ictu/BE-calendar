@@ -465,7 +465,7 @@ export const respondToEventRecurring = (req, res) => {
 };
 
 export const listEventByUser = (req, res) => {
-  const user_id = Number(req.params.user_id);
+  const user_id = req.params.user_id;
 
   // Lấy google_email của người dùng hiện tại
   db.query(
@@ -503,11 +503,11 @@ export const listEventByUser = (req, res) => {
         if (err) {
           return res.status(500).json({ message: "Lỗi server!", error: err });
         }
-
         const eventMap = new Map();
         results.forEach((row) => {
           if (!eventMap.has(row.event_id)) {
             // Tạo sự kiện mới nếu chưa tồn tại
+            
             eventMap.set(row.event_id, {
               id: row.event_id,
               title: row.title,
@@ -516,7 +516,7 @@ export const listEventByUser = (req, res) => {
               start_time: row.start_time,
               end_time: row.end_time,
               recurring_id: row.recurring_id,
-              can_edit: row.owner_id === user_id,
+              can_edit: Number(row.owner_id) === Number(user_id),
               meet_link: row.meet_link,
               attendees: row.attendee_email
                 ? [
@@ -538,6 +538,7 @@ export const listEventByUser = (req, res) => {
             }
           }
         });
+        // console.log(eventMap)
 
         const data = Array.from(eventMap.values());
         res.status(200).json({
@@ -1398,7 +1399,6 @@ export const updateRecurringEvent = (req, res) => {
 
                         const updatedEnd = new Date(newEndDate);
                         updatedEnd.setDate(updatedEnd.getDate() + diffDays);
-        
 
                         if (googleEventId && accessToken) {
                           const calendar = google.calendar({
