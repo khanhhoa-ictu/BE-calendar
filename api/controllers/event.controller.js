@@ -549,6 +549,35 @@ export const listEventByUser = (req, res) => {
   );
 };
 
+const handleUpdateEvent = async (googleEventId, etag) => {
+  db.query(
+    "SELECT * FROM event WHERE google_event_id = ?",
+    [googleEventId],
+    async (error, result) => {
+      if (error) {
+        console.log("error", error);
+        return;
+      }
+
+      await Promise.all(
+        result.map(async (item, index) => {
+          // Nếu chưa tồn tại thì mới update
+          await new Promise((resolve, reject) => {
+            db.query(
+              "UPDATE event SET last_resource_id=? WHERE last_resource_id = ?",
+              [`${etag}-${index}`, item.last_resource_id],
+              (err, result) => {
+                if (err) return reject(err);
+                resolve();
+              }
+            );
+          });
+        })
+      );
+    }
+  );
+};
+
 export const updateEvent = (req, res) => {
   const { id, title, description, start_time, end_time, accessToken, emails } =
     req.body;
@@ -635,7 +664,6 @@ export const updateEvent = (req, res) => {
         },
         sendUpdates: "all",
       });
-
       if (response.status === 200) {
         db.query(
           "DELETE FROM event_attendees WHERE event_id = ?",
@@ -650,12 +678,19 @@ export const updateEvent = (req, res) => {
 
             const updateQuery =
               googleEventId === response.data.id
-                ? "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?"
+                ? "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?,last_resource_id = ?  WHERE id = ?"
                 : "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ? WHERE id = ?";
 
             const updateValues =
               googleEventId === response.data.id
-                ? [title, description, start_time, end_time, id]
+                ? [
+                    title,
+                    description,
+                    start_time,
+                    end_time,
+                    `${response.data.etag}-1`,
+                    id,
+                  ]
                 : [
                     title,
                     description,
@@ -665,7 +700,7 @@ export const updateEvent = (req, res) => {
                     id,
                   ];
 
-            db.query(updateQuery, updateValues, (err) => {
+            db.query(updateQuery, updateValues, async (err) => {
               if (err) {
                 return res.status(500).json({
                   message: "Cập nhật database thất bại",
@@ -682,19 +717,30 @@ export const updateEvent = (req, res) => {
                 db.query(
                   "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
                   [values],
-                  (err) => {
+                  async (err) => {
                     if (err) {
                       return res.status(500).json({
                         message: "Lỗi lưu danh sách người tham gia",
                         error: err,
                       });
                     }
+                    if (instanceToUpdate?.id) {
+                      await handleUpdateEvent(
+                        googleEventId,
+                        response.data.etag
+                      );
+                    }
+
                     return res.status(200).json({
                       message: "Cập nhật thành công trên Google và database!",
                     });
                   }
                 );
               } else {
+                if (instanceToUpdate?.id) {
+                  await handleUpdateEvent(googleEventId, response.data.etag);
+                }
+
                 return res.status(200).json({
                   message: "Cập nhật thành công trên Google và database!",
                 });
@@ -741,16 +787,20 @@ export const deleteEvent = (req, res) => {
             version: "v3",
             auth: oauth2Client,
           });
+
           const startTime = new Date(results[0].start_time).toISOString();
+
           const instances = await calendar.events.instances({
             calendarId: "primary",
             eventId: googleEventId,
           });
-          const instanceToDelete = instances.data.items.find((event) => {
-            const eventStart = new Date(event.start.dateTime).getTime();
-            const dbStart = new Date(startTime).getTime();
 
-            return eventStart === dbStart;
+          const instanceToDelete = instances.data.items.find((event) => {
+            const eventStart = new Date(event?.start?.dateTime).getTime();
+            const eventStartMonth =
+              new Date(event.start.date).getTime() - 7 * 60 * 60 * 1000;
+            const dbStart = new Date(startTime).getTime();
+            return eventStart === dbStart || eventStartMonth;
           });
 
           if (!instanceToDelete) {
@@ -763,6 +813,7 @@ export const deleteEvent = (req, res) => {
             eventId: instanceToDelete.id,
           });
         } catch (error) {
+          console.log(error);
           return res
             .status(500)
             .json({ message: "Lỗi đồng bộ với Google Calendar", error });
@@ -982,7 +1033,6 @@ export const updateRecurringEvent = (req, res) => {
   }
 
   const count = frequency === "daily" ? 90 : 12; // Daily: 90 ngày, Weekly/Monthly: 12 lần
-
   db.beginTransaction((err) => {
     if (err)
       return res.status(500).json({ message: "Lỗi transaction", error: err });
@@ -1076,7 +1126,6 @@ export const updateRecurringEvent = (req, res) => {
         const insertNewEvents = async (listEvent, currentEvent) => {
           let events = [];
           let promises = [];
-
           if (frequency === "none") {
             db.query(
               "INSERT INTO event (user_id, title, description, start_time, end_time, recurring_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1155,7 +1204,6 @@ export const updateRecurringEvent = (req, res) => {
               startDate.setMonth(startDate.getMonth() + diffMonths + i);
               endDate.setMonth(endDate.getMonth() + diffMonths + i);
             }
-
             const queryPromise = new Promise((resolve, reject) => {
               db.query(
                 "INSERT INTO event (user_id, title, description, start_time, end_time, recurring_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1240,7 +1288,6 @@ export const updateRecurringEvent = (req, res) => {
                 }
                 const newStartDate = new Date(start_time);
                 const newEndDate = new Date(end_time);
-
                 // Tạo danh sách promises để cập nhật tất cả sự kiện
                 const updatePromises = result.map((event) => {
                   return new Promise((resolve, reject) => {
@@ -1251,7 +1298,6 @@ export const updateRecurringEvent = (req, res) => {
                       (oldStart - currentEvent?.start_time) /
                       (1000 * 60 * 60 * 24)
                     );
-
                     // Tạo thời gian mới cho sự kiện hiện tại
                     const updatedStart = new Date(newStartDate);
                     updatedStart.setDate(updatedStart.getDate() + diffDays);
@@ -1338,8 +1384,21 @@ export const updateRecurringEvent = (req, res) => {
                     db.query(
                       "SELECT * FROM event WHERE id = ?",
                       [id],
-                      async (err, result) => {
-                        const googleEventId = result[0].google_event_id;
+                      async (err, resultEvent) => {
+                        const googleEventId = resultEvent[0].google_event_id;
+                        const diffDays = Math.round(
+                          (result[0].start_time - currentEvent?.start_time) /
+                            (1000 * 60 * 60 * 24)
+                        );
+                        const newStartDate = new Date(start_time);
+                        const newEndDate = new Date(end_time);
+
+                        const updatedStart = new Date(newStartDate);
+                        updatedStart.setDate(updatedStart.getDate() + diffDays);
+
+                        const updatedEnd = new Date(newEndDate);
+                        updatedEnd.setDate(updatedEnd.getDate() + diffDays);
+        
 
                         if (googleEventId && accessToken) {
                           const calendar = google.calendar({
@@ -1357,14 +1416,14 @@ export const updateRecurringEvent = (req, res) => {
                               summary: title,
                               description: description,
                               start: {
-                                dateTime: new Date(start_time).toISOString(),
+                                dateTime: new Date(updatedStart).toISOString(),
                                 timeZone: "Asia/Ho_Chi_Minh",
                               },
                               end: {
-                                dateTime: new Date(end_time).toISOString(),
+                                dateTime: new Date(updatedEnd).toISOString(),
                                 timeZone: "Asia/Ho_Chi_Minh",
                               },
-                              attendees: emails.map((email) => ({
+                              attendees: emails?.map((email) => ({
                                 email,
                               })),
                               recurrence: originalEvent.data.recurrence, //Giữ nguyên RRULE
@@ -1482,7 +1541,6 @@ export const createPoll = (req, res) => {
         opt.start_time,
         opt.end_time,
       ]);
-      console.log(values);
       db.query(
         "INSERT INTO poll_options (poll_id, start_time, end_time) VALUES ?",
         [values],
@@ -1609,8 +1667,8 @@ export const vote = (req, res) => {
 const saveMeetingEventToDB = ({ eventID, meetLink, etag, id }) => {
   return new Promise((resolve, reject) => {
     db.query(
-      `UPDATE event SET meet_link = ?, last_resource_id = ?, google_event_id = ?  WHERE id = ?`,
-      [meetLink, etag, id, eventID],
+      `UPDATE event SET meet_link = ?, last_resource_id = ?, google_event_id = ?, synced = ?  WHERE id = ?`,
+      [meetLink, etag, id, 1, eventID],
       (err, result) => {
         if (err) {
           console.error("Lỗi khi lưu sự kiện:", err);
@@ -1815,10 +1873,7 @@ export const finalizePoll = (req, res) => {
                                         sendUpdates: "all", // gửi thông báo mời tới attendees
                                         conferenceDataVersion: 1,
                                       });
-                                    console.log(
-                                      "data========",
-                                      response.data.etag
-                                    );
+
                                     if (response.status === 200) {
                                       const meetLink =
                                         response.data.conferenceData?.entryPoints?.find(
