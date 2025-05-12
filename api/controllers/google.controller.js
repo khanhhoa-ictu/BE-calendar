@@ -274,7 +274,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://e69d-2405-4802-1bd4-1540-2498-5e8c-446f-b010.ngrok-free.app/webhook",
+          "https://2ec3-2405-4802-1bf4-94e0-a8bb-43b8-79de-92eb.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -294,7 +294,7 @@ const updateEvent = async (
   description,
   etag,
   id,
-  itemUpdate = "",
+  itemUpdate = ""
 ) => {
   try {
     db.query(
@@ -433,7 +433,6 @@ export const webhookGoogle = async (req, res) => {
           orderBy: "updated",
           singleEvents: false,
         });
-
         const events = response.data.items?.filter(
           (item) => item.eventType !== "birthday"
         );
@@ -487,7 +486,7 @@ export const webhookGoogle = async (req, res) => {
             const convetEventCalendar = events?.filter(
               (item) => item.status !== "cancelled"
             );
-            // tìm những sự kiện thay đổi trên google calendar
+            // tìm sự kiện thay đổi trên google calendar
             const filterfetchedEvent = convetEventCalendar.filter((item) =>
               updateEventEtagId.includes(item?.etag)
             );
@@ -583,9 +582,12 @@ export const webhookGoogle = async (req, res) => {
                                   return new Promise((resolve, reject) => {
                                     // Sao chép ngày để tránh bị ghi đè khi thay đổi
                                     let startDate = new Date(
-                                      event?.start?.dateTime
+                                      event?.start?.dateTime ||
+                                        event?.start?.date
                                     );
-                                    let endDate = new Date(event.end.dateTime);
+                                    let endDate = new Date(
+                                      event.end.dateTime || event.end.date
+                                    );
 
                                     if (frequency === "daily") {
                                       startDate.setDate(
@@ -679,103 +681,130 @@ export const webhookGoogle = async (req, res) => {
                         );
                       } else {
                         // add 1 event
-                        db.query(
-                          "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
-                          ["none", 1],
-                          (err, result) => {
-                            if (err) return reject("Lỗi thêm sự kiện vào DB");
-
-                            const recurringId = result.insertId;
-
-                            db.query(
-                              "SELECT last_resource_id FROM event WHERE user_id = ?",
-                              [results[0]?.id],
-                              (err, resultEvent) => {
-                                if (err) return reject("Lỗi truy vấn DB");
-
-                                const newMap = resultEvent?.map(
-                                  (item) => item?.last_resource_id
-                                );
-
-                                const isExist = newMap.some((etag) =>
-                                  etag?.startsWith(event?.etag)
-                                );
-
-                                if (isExist) {
-                                  console.log(
-                                    `🔄 Sự kiện ${event?.id} không thay đổi (etag giống nhau), bỏ qua.`
-                                  );
-                                  return resolve();
-                                }
-
-                                if (google_email === event.creator?.email) {
-                                  db.query(
-                                    "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    [
-                                      results[0]?.id,
-                                      `${event.etag}-1`,
-                                      event.summary,
-                                      event?.start?.dateTime || new Date(),
-                                      event?.end?.dateTime || new Date(),
-                                      event.description || "",
-                                      recurringId,
-                                      event?.id,
-                                      1,
-                                    ],
-                                    (err, eventAdd) => {
-                                      if (err)
-                                        return reject("Lỗi lưu sự kiện vào DB");
-                                      const emails = event?.attendees?.map(
-                                        (item) => item?.email
-                                      );
-                                      if (emails?.length > 0) {
-                                        const values = event?.attendees.map(
-                                          (item) => [
-                                            eventAdd.insertId,
-                                            item.email,
-                                            item.responseStatus,
-                                          ]
-                                        );
-                                        db.query(
-                                          "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                                          [values],
-                                          (err) => {
-                                            if (err) return reject(err);
-                                            allEvents.push({
-                                              id: eventAdd?.insertId,
-                                              title: event.summary,
-                                              start_time:
-                                                event?.start?.dateTime ||
-                                                new Date(),
-                                              end_time:
-                                                event?.start?.dateTime ||
-                                                new Date(),
-                                            });
-                                            resolve();
-                                          }
-                                        );
-                                      } else {
-                                        allEvents.push({
-                                          id: event?.id,
-                                          title: event.summary,
-                                          start_time:
-                                            event?.start?.dateTime ||
-                                            new Date(),
-                                          end_time:
-                                            event?.start?.dateTime ||
-                                            new Date(),
-                                        });
-                                        resolve();
-                                      }
-                                    }
-                                  );
-                                } else {
-                                  return resolve();
-                                }
+                        if (event.recurringEventId) {
+                          db.query(
+                            "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE instance_id = ?",
+                            [
+                              event?.summary,
+                              event.start.dateTime || new Date(),
+                              event.end.dateTime || new Date(),
+                              event.description || "",
+                              `${event.etag}-1`,
+                              event.id,
+                            ],
+                            (err) => {
+                              if (err) {
+                                console.error("Lỗi lưu sự kiện vào DB:", err);
+                                return;
                               }
-                            );
-                          }
-                        );
+                              resolve();
+                            }
+                          );
+                        } else {
+                          db.query(
+                            "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
+                            ["none", 1],
+                            (err, result) => {
+                              if (err) return reject("Lỗi thêm sự kiện vào DB");
+
+                              const recurringId = result.insertId;
+
+                              db.query(
+                                "SELECT last_resource_id FROM event WHERE user_id = ?",
+                                [results[0]?.id],
+                                (err, resultEvent) => {
+                                  if (err) return reject("Lỗi truy vấn DB");
+
+                                  const newMap = resultEvent?.map(
+                                    (item) => item?.last_resource_id
+                                  );
+
+                                  const isExist = newMap.some((etag) =>
+                                    etag?.startsWith(event?.etag)
+                                  );
+
+                                  if (isExist) {
+                                    console.log(
+                                      `🔄 Sự kiện ${event?.id} không thay đổi (etag giống nhau), bỏ qua.`
+                                    );
+                                    return resolve();
+                                  }
+
+                                  if (google_email === event.creator?.email) {
+                                    db.query(
+                                      "INSERT INTO event (user_id, last_resource_id, title, start_time, end_time, description, recurring_id, google_event_id, synced) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      [
+                                        results[0]?.id,
+                                        `${event.etag}-1`,
+                                        event.summary,
+                                        event?.start?.dateTime ||
+                                          event?.start?.date ||
+                                          new Date(),
+                                        event?.end?.dateTime ||
+                                          event?.end?.date ||
+                                          new Date(),
+                                        event.description || "",
+                                        recurringId,
+                                        event?.id,
+                                        1,
+                                      ],
+                                      (err, eventAdd) => {
+                                        if (err)
+                                          return reject(
+                                            "Lỗi lưu sự kiện vào DB"
+                                          );
+                                        const emails = event?.attendees?.map(
+                                          (item) => item?.email
+                                        );
+                                        if (emails?.length > 0) {
+                                          const values = event?.attendees.map(
+                                            (item) => [
+                                              eventAdd.insertId,
+                                              item.email,
+                                              item.responseStatus,
+                                            ]
+                                          );
+                                          db.query(
+                                            "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                                            [values],
+                                            (err) => {
+                                              if (err) return reject(err);
+                                              allEvents.push({
+                                                id: eventAdd?.insertId,
+                                                title: event.summary,
+                                                start_time:
+                                                  event?.start?.dateTime ||
+                                                  new Date(),
+                                                end_time:
+                                                  event?.start?.dateTime ||
+                                                  new Date(),
+                                              });
+                                              resolve();
+                                            }
+                                          );
+                                        } else {
+                                          allEvents.push({
+                                            id: event?.id,
+                                            title: event.summary,
+                                            start_time:
+                                              event?.start?.dateTime ||
+                                              new Date(),
+                                            end_time:
+                                              event?.start?.dateTime ||
+                                              new Date(),
+                                          });
+                                          resolve();
+                                        }
+                                      }
+                                    );
+                                  } else {
+                                    return resolve();
+                                  }
+                                }
+                              );
+                            }
+                          );
+                        }
                       }
                     } else {
                       resolve();
@@ -863,7 +892,7 @@ export const webhookGoogle = async (req, res) => {
                     itemUpdate.description,
                     itemUpdate.etag,
                     result[0].id,
-                    itemUpdate,
+                    itemUpdate
                   );
                 } else {
                   // thay doi recurring
