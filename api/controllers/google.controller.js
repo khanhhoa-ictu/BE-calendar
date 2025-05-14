@@ -274,7 +274,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://2ec3-2405-4802-1bf4-94e0-a8bb-43b8-79de-92eb.ngrok-free.app/webhook",
+          "https://d308-171-242-58-87.ngrok-free.app/webhook",
 
         token: email,
       },
