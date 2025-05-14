@@ -278,7 +278,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://5a9d-171-242-58-87.ngrok-free.app/webhook",
+          "https://ff43-2405-4802-1bd9-12a0-55b3-d4fc-2787-894f.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -486,6 +486,7 @@ export const webhookGoogle = async (req, res) => {
           "SELECT *  FROM event WHERE user_id = ?",
           [results[0].id],
           async (err, existingEvents) => {
+            // console.log(existingEvents)
             if (err) {
               return res
                 .status(500)
@@ -543,8 +544,8 @@ export const webhookGoogle = async (req, res) => {
                 listIdUpdate.includes(item?.google_event_id) ||
                 listIdUpdate.includes(item?.instance_id)
             );
-            // console.log("envet===", listIdUpdate);
-            // console.log("existingEvents===", events);
+            console.log("envet===", findItemUpdateInDatabase);
+            console.log("existingEvents===", updateEventEtagId);
 
             if (newEventIds.length > 0) {
               let allEvents = [];
@@ -632,7 +633,7 @@ export const webhookGoogle = async (req, res) => {
                                     // Sao chép ngày để tránh bị ghi đè khi thay đổi
                                     let startDate = new Date(
                                       event?.start?.dateTime ||
-                                      event?.start?.date
+                                        event?.start?.date
                                     );
                                     let endDate = new Date(
                                       event.end.dateTime || event.end.date
@@ -773,11 +774,11 @@ export const webhookGoogle = async (req, res) => {
                                         `${event.etag}-1`,
                                         event.summary,
                                         event?.start?.dateTime ||
-                                        event?.start?.date ||
-                                        new Date(),
+                                          event?.start?.date ||
+                                          new Date(),
                                         event?.end?.dateTime ||
-                                        event?.end?.date ||
-                                        new Date(),
+                                          event?.end?.date ||
+                                          new Date(),
                                         event.description || "",
                                         recurringId,
                                         event?.id,
@@ -851,15 +852,17 @@ export const webhookGoogle = async (req, res) => {
               // Đợi tất cả promises hoàn thành
               Promise.all(eventPromises)
                 .then(() => {
-                  res.status(200).json({
-                    message: "Sự kiện đã được tạo!",
-                    data: allEvents,
-                  });
+                  console.log("Sự kiện đã được tạo!")
+                  // res.status(200).json({
+                  //   message: "Sự kiện đã được tạo!",
+                  //   data: allEvents,
+                  // });
                 })
                 .catch((error) => {
-                  res.status(442).json({
-                    message: error || "Có lỗi xảy ra khi tạo sự kiện",
-                  });
+                  console.log("Có lỗi xảy ra khi tạo sự kiện")
+                  // res.status(442).json({
+                  //   message: error || "Có lỗi xảy ra khi tạo sự kiện",
+                  // });
                 });
             }
 
@@ -881,16 +884,17 @@ export const webhookGoogle = async (req, res) => {
 
             //update
             if (updateEventEtagId.length > 0 && findItemUpdateInDatabase) {
+              console.log("vao up date");
               const isUpdateOneItem = isOnlyOneInstanceUpdated(
                 findItemUpdateInDatabase,
                 filterfetchedEvent[0]
               );
-              console.log(filterfetchedEvent[0]);
               if (
                 (filterfetchedEvent.length > 1 && isUpdateOneItem) ||
                 filterfetchedEvent[0].recurringEventId
               ) {
-                console.log("zooo nha");
+                console.log("vao day la sao");
+
                 const event = filterfetchedEvent[filterfetchedEvent.length - 1];
                 const startTime = event?.originalStartTime?.dateTime;
                 const newGoogleId = event?.recurringEventId;
@@ -954,6 +958,7 @@ export const webhookGoogle = async (req, res) => {
                   }
                 );
               } else {
+                console.log("phai vao day");
                 const itemUpdate = filterfetchedEvent[0];
                 const result = await new Promise((resolve, reject) => {
                   db.query(
@@ -983,8 +988,8 @@ export const webhookGoogle = async (req, res) => {
                   // update list event
                   const frequency = itemUpdate?.recurrence
                     ? itemUpdate?.recurrence[0]
-                      ?.match(/FREQ=([^;]+)/)[1]
-                      ?.toLowerCase()
+                        ?.match(/FREQ=([^;]+)/)[1]
+                        ?.toLowerCase()
                     : "none";
                   //  Lấy danh sách các event còn lại trong chuỗi
                   if (frequency === oldRecurring[0]?.frequency) {
@@ -1040,7 +1045,10 @@ export const webhookGoogle = async (req, res) => {
                     (err, result) => {
                       if (err) {
                         console.error("Lỗi lưu sự kiện vào DB:", err);
-                        return res.status(500).json({ message: "Lỗi lưu sự kiện vào DB", error: err });
+                        return res.status(500).json({
+                          message: "Lỗi lưu sự kiện vào DB",
+                          error: err,
+                        });
                       }
 
                       const attendees = itemUpdate?.attendees || [];
@@ -1051,14 +1059,16 @@ export const webhookGoogle = async (req, res) => {
                         (err) => {
                           if (err) {
                             return res.status(500).json({
-                              message: "Lỗi khi xoá attendees cũ trong database",
+                              message:
+                                "Lỗi khi xoá attendees cũ trong database",
                               error: err,
                             });
                           }
 
                           if (attendees.length === 0) {
                             return res.status(200).json({
-                              message: "Cập nhật thành công trên Google và database!",
+                              message:
+                                "Cập nhật thành công trên Google và database!",
                             });
                           }
 
@@ -1073,14 +1083,15 @@ export const webhookGoogle = async (req, res) => {
                             [values],
                             (err) => {
                               if (err) {
-                               res.status(500).json({
+                                res.status(500).json({
                                   message: "Lỗi lưu danh sách người tham gia",
                                   error: err,
                                 });
                               }
 
-                             res.status(200).json({
-                                message: "Cập nhật thành công trên Google và database!",
+                              res.status(200).json({
+                                message:
+                                  "Cập nhật thành công trên Google và database!",
                               });
                             }
                           );
@@ -1088,7 +1099,6 @@ export const webhookGoogle = async (req, res) => {
                       );
                     }
                   );
-
                 }
               }
             }
