@@ -506,7 +506,7 @@ export const listEventByUser = (req, res) => {
         results.forEach((row) => {
           if (!eventMap.has(row.event_id)) {
             // Tạo sự kiện mới nếu chưa tồn tại
-            
+
             eventMap.set(row.event_id, {
               id: row.event_id,
               title: row.title,
@@ -519,11 +519,11 @@ export const listEventByUser = (req, res) => {
               meet_link: row.meet_link,
               attendees: row.attendee_email
                 ? [
-                    {
-                      email: row.attendee_email,
-                      response_status: row.response_status,
-                    },
-                  ]
+                  {
+                    email: row.attendee_email,
+                    response_status: row.response_status,
+                  },
+                ]
                 : [],
             });
           } else {
@@ -601,7 +601,8 @@ export const updateEvent = (req, res) => {
 
     // Nếu không có Google Event, chỉ cập nhật trong database
     if (!googleEventId) {
-      return db.query(
+
+      db.query(
         "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ? WHERE id = ?",
         [title, description, start_time, end_time, id],
         (err) => {
@@ -615,6 +616,7 @@ export const updateEvent = (req, res) => {
             .json({ message: "Cập nhật thành công trong database!" });
         }
       );
+      return;
     }
 
     try {
@@ -684,21 +686,21 @@ export const updateEvent = (req, res) => {
             const updateValues =
               googleEventId === response.data.id
                 ? [
-                    title,
-                    description,
-                    start_time,
-                    end_time,
-                    `${response.data.etag}-1`,
-                    id,
-                  ]
+                  title,
+                  description,
+                  start_time,
+                  end_time,
+                  `${response.data.etag}-1`,
+                  id,
+                ]
                 : [
-                    title,
-                    description,
-                    start_time,
-                    end_time,
-                    response.data.id,
-                    id,
-                  ];
+                  title,
+                  description,
+                  start_time,
+                  end_time,
+                  response.data.id,
+                  id,
+                ];
 
             db.query(updateQuery, updateValues, async (err) => {
               if (err) {
@@ -1077,6 +1079,17 @@ export const updateRecurringEvent = (req, res) => {
                   return reject(new Error("Không tìm thấy sự kiện"));
 
                 const googleEventId = result[0]?.google_event_id;
+                if (!googleEventId) {
+                  db.query(
+                    "DELETE FROM event WHERE recurring_id = ?",
+                    [recurringId],
+                    (err) => {
+                      if (err) return reject(err);
+                      resolve("Xóa sự kiện thành công!");
+                    }
+                  );
+                  return
+                }
                 try {
                   const calendar = google.calendar({
                     version: "v3",
@@ -1388,7 +1401,7 @@ export const updateRecurringEvent = (req, res) => {
                         const googleEventId = resultEvent[0].google_event_id;
                         const diffDays = Math.round(
                           (result[0].start_time - currentEvent?.start_time) /
-                            (1000 * 60 * 60 * 24)
+                          (1000 * 60 * 60 * 24)
                         );
                         const newStartDate = new Date(start_time);
                         const newEndDate = new Date(end_time);
@@ -1472,6 +1485,8 @@ export const updateRecurringEvent = (req, res) => {
                     );
                   }
                 } catch (err) {
+                  console.log(err);
+
                   db.rollback(() => {
                     res.status(500).json({
                       message: "Lỗi khi cập nhật sự kiện",

@@ -135,6 +135,11 @@ export const profile = (req, res) => {
       "SELECT * FROM user WHERE email=?",
       [user.email],
       (err, result) => {
+        console.log(result[0]);
+        if (!result[0]) {
+          res.status(401).json({ message: "không tìm thấy tài khoản" });
+          return;
+        }
         const { password, token_forgot, ...user } = result[0];
         if (err) {
           console.log(err);

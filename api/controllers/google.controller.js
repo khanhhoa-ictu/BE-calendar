@@ -278,7 +278,7 @@ export const registerWebhook = async (req, res) => {
         id: webhookId,
         type: "web_hook",
         address:
-          "https://d308-171-242-58-87.ngrok-free.app/webhook",
+          "https://5a9d-171-242-58-87.ngrok-free.app/webhook",
 
         token: email,
       },
@@ -632,7 +632,7 @@ export const webhookGoogle = async (req, res) => {
                                     // Sao chép ngày để tránh bị ghi đè khi thay đổi
                                     let startDate = new Date(
                                       event?.start?.dateTime ||
-                                        event?.start?.date
+                                      event?.start?.date
                                     );
                                     let endDate = new Date(
                                       event.end.dateTime || event.end.date
@@ -773,11 +773,11 @@ export const webhookGoogle = async (req, res) => {
                                         `${event.etag}-1`,
                                         event.summary,
                                         event?.start?.dateTime ||
-                                          event?.start?.date ||
-                                          new Date(),
+                                        event?.start?.date ||
+                                        new Date(),
                                         event?.end?.dateTime ||
-                                          event?.end?.date ||
-                                          new Date(),
+                                        event?.end?.date ||
+                                        new Date(),
                                         event.description || "",
                                         recurringId,
                                         event?.id,
@@ -885,7 +885,7 @@ export const webhookGoogle = async (req, res) => {
                 findItemUpdateInDatabase,
                 filterfetchedEvent[0]
               );
-             
+              console.log(filterfetchedEvent[0]);
               if (
                 (filterfetchedEvent.length > 1 && isUpdateOneItem) ||
                 filterfetchedEvent[0].recurringEventId
@@ -905,7 +905,7 @@ export const webhookGoogle = async (req, res) => {
                         error: err,
                       });
                     }
-                   
+
                     const itemUpdateDataBase = results.find(
                       (item) => item.instance_id === event.id
                     );
@@ -939,12 +939,14 @@ export const webhookGoogle = async (req, res) => {
                         const dbStart = new Date(item.start_time).getTime();
                         return eventStart === dbStart;
                       });
-                      await handleUpdateEvent(
-                        instanceToUpdate?.google_event_id,
-                        instanceToUpdate.id,
-                        event,
-                        event.id
-                      );
+                      if (instanceToUpdate) {
+                        await handleUpdateEvent(
+                          instanceToUpdate?.google_event_id,
+                          instanceToUpdate.id,
+                          event,
+                          event.id
+                        );
+                      }
                       return res.status(200).json({
                         message: "Cập nhật thành công trên Google và database!",
                       });
@@ -981,8 +983,8 @@ export const webhookGoogle = async (req, res) => {
                   // update list event
                   const frequency = itemUpdate?.recurrence
                     ? itemUpdate?.recurrence[0]
-                        ?.match(/FREQ=([^;]+)/)[1]
-                        ?.toLowerCase()
+                      ?.match(/FREQ=([^;]+)/)[1]
+                      ?.toLowerCase()
                     : "none";
                   //  Lấy danh sách các event còn lại trong chuỗi
                   if (frequency === oldRecurring[0]?.frequency) {
@@ -1038,53 +1040,55 @@ export const webhookGoogle = async (req, res) => {
                     (err, result) => {
                       if (err) {
                         console.error("Lỗi lưu sự kiện vào DB:", err);
-                        return;
+                        return res.status(500).json({ message: "Lỗi lưu sự kiện vào DB", error: err });
                       }
 
                       const attendees = itemUpdate?.attendees || [];
+
                       db.query(
                         "DELETE FROM event_attendees WHERE event_id = ?",
                         [findItemUpdateInDatabase?.id],
                         (err) => {
                           if (err) {
                             return res.status(500).json({
-                              message:
-                                "Lỗi khi xoá attendees cũ trong database",
+                              message: "Lỗi khi xoá attendees cũ trong database",
                               error: err,
                             });
                           }
-                          if (attendees.length > 0) {
-                            const values = attendees.map((attendee) => [
-                              findItemUpdateInDatabase?.id,
-                              attendee?.email,
-                              attendee?.responseStatus,
-                            ]);
-                            db.query(
-                              "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                              [values],
-                              (err) => {
-                                if (err) {
-                                  return res.status(500).json({
-                                    message: "Lỗi lưu danh sách người tham gia",
-                                    error: err,
-                                  });
-                                }
-                                return res.status(200).json({
-                                  message:
-                                    "Cập nhật thành công trên Google và database!",
-                                });
-                              }
-                            );
-                          } else {
+
+                          if (attendees.length === 0) {
                             return res.status(200).json({
-                              message:
-                                "Cập nhật thành công trên Google và database!",
+                              message: "Cập nhật thành công trên Google và database!",
                             });
                           }
+
+                          const values = attendees.map((attendee) => [
+                            findItemUpdateInDatabase?.id,
+                            attendee?.email,
+                            attendee?.responseStatus,
+                          ]);
+
+                          db.query(
+                            "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                            [values],
+                            (err) => {
+                              if (err) {
+                               res.status(500).json({
+                                  message: "Lỗi lưu danh sách người tham gia",
+                                  error: err,
+                                });
+                              }
+
+                             res.status(200).json({
+                                message: "Cập nhật thành công trên Google và database!",
+                              });
+                            }
+                          );
                         }
                       );
                     }
                   );
+
                 }
               }
             }
