@@ -2,7 +2,11 @@ import { google } from "googleapis";
 import dotenv from "dotenv";
 import axios from "axios";
 import { db } from "./../../index.js";
-import { getGoogleUserInfo, getRecurrenceRule } from "../../common/index.js";
+import {
+  getGoogleUserInfo,
+  getRecurrenceRule,
+  isOnlyOneInstanceUpdated,
+} from "../../common/index.js";
 
 dotenv.config();
 
@@ -341,13 +345,14 @@ const updateEvent = async (
 
             // Cập nhật sự kiện hiện tại
             db.query(
-              "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, last_resource_id = ? WHERE id = ?",
+              "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, last_resource_id = ? , instance_id = ? WHERE id = ?",
               [
                 title,
                 description,
                 updatedStart,
                 updatedEnd,
                 `${etag}-${index}`,
+                "",
                 event.id,
               ],
               (updateErr, updateResult) => {
@@ -396,6 +401,47 @@ const updateEvent = async (
   }
 };
 
+const handleUpdateEvent = async (
+  googleEventId,
+  currentId,
+  event,
+  instanceId
+) => {
+  try {
+    // Lấy danh sách các event liên quan (để cập nhật last_resource_id)
+    const [rows] = await db
+      .promise()
+      .query("SELECT * FROM event WHERE google_event_id = ?", [googleEventId]);
+
+    // Cập nhật sự kiện hiện tại
+    await db
+      .promise()
+      .query(
+        "UPDATE event SET title = ?, description = ?, start_time = ?, end_time = ?, instance_id = ? WHERE id = ?",
+        [
+          event.summary,
+          event?.description || "",
+          new Date(event.start.dateTime),
+          new Date(event.end.dateTime),
+          instanceId,
+          currentId,
+        ]
+      );
+
+    // Cập nhật tất cả các last_resource_id tương ứng
+    for (let i = 0; i < rows.length; i++) {
+      await db
+        .promise()
+        .query(
+          "UPDATE event SET last_resource_id=? WHERE last_resource_id = ?",
+          [`${event.etag}-${i}`, rows[i].last_resource_id]
+        );
+    }
+  } catch (err) {
+    console.error("❌ Lỗi khi cập nhật:", err);
+  }
+};
+
 export const webhookGoogle = async (req, res) => {
   try {
     const userEmail = req.headers["x-goog-channel-token"]; // Kiểm tra nếu bạn đã lưu token theo email
@@ -436,9 +482,8 @@ export const webhookGoogle = async (req, res) => {
         const events = response.data.items?.filter(
           (item) => item.eventType !== "birthday"
         );
-
         db.query(
-          "SELECT google_event_id, last_resource_id, id FROM event WHERE user_id = ?",
+          "SELECT *  FROM event WHERE user_id = ?",
           [results[0].id],
           async (err, existingEvents) => {
             if (err) {
@@ -493,10 +538,14 @@ export const webhookGoogle = async (req, res) => {
             // danh sách nhũng id update trên google calendar
             const listIdUpdate = filterfetchedEvent?.map((item) => item.id);
             // tìm sự được sự kiện dag update trong database;
-            const findItemUpdateInDatabase = existingEvents.find((item) =>
-              listIdUpdate.includes(item?.google_event_id)
+            const findItemUpdateInDatabase = existingEvents.find(
+              (item) =>
+                listIdUpdate.includes(item?.google_event_id) ||
+                listIdUpdate.includes(item?.instance_id)
             );
-            // console.log("updateEventEtagId===", updateEventEtagId);
+            // console.log("envet===", listIdUpdate);
+            // console.log("existingEvents===", events);
+
             if (newEventIds.length > 0) {
               let allEvents = [];
               const listEventDelete = [];
@@ -681,25 +730,11 @@ export const webhookGoogle = async (req, res) => {
                         );
                       } else {
                         // add 1 event
+                        // console.log("event====",event);
+
                         if (event.recurringEventId) {
-                          db.query(
-                            "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE instance_id = ?",
-                            [
-                              event?.summary,
-                              event.start.dateTime || new Date(),
-                              event.end.dateTime || new Date(),
-                              event.description || "",
-                              `${event.etag}-1`,
-                              event.id,
-                            ],
-                            (err) => {
-                              if (err) {
-                                console.error("Lỗi lưu sự kiện vào DB:", err);
-                                return;
-                              }
-                              resolve();
-                            }
-                          );
+                          // console.log('zoooo ne')
+                          return resolve();
                         } else {
                           db.query(
                             "INSERT INTO recurring_events (frequency, count) VALUES (?, ?)",
@@ -846,140 +881,211 @@ export const webhookGoogle = async (req, res) => {
 
             //update
             if (updateEventEtagId.length > 0 && findItemUpdateInDatabase) {
-              const itemUpdate = filterfetchedEvent[0];
-              const result = await new Promise((resolve, reject) => {
+              const isUpdateOneItem = isOnlyOneInstanceUpdated(
+                findItemUpdateInDatabase,
+                filterfetchedEvent[0]
+              );
+             
+              if (
+                (filterfetchedEvent.length > 1 && isUpdateOneItem) ||
+                filterfetchedEvent[0].recurringEventId
+              ) {
+                console.log("zooo nha");
+                const event = filterfetchedEvent[filterfetchedEvent.length - 1];
+                const startTime = event?.originalStartTime?.dateTime;
+                const newGoogleId = event?.recurringEventId;
+                // console.log(newGoogleId);
                 db.query(
                   "SELECT * FROM event WHERE google_event_id = ?",
-                  [itemUpdate?.id],
-                  (err, result) => {
-                    if (err) return reject(err);
-                    resolve(result);
-                  }
-                );
-              });
-              const oldRecurring = await new Promise((resolve, reject) => {
-                db.query(
-                  "SELECT * FROM recurring_events WHERE id = ?",
-                  [result[0]?.recurring_id],
-                  (err, result) => {
-                    if (err) return reject(err);
-                    resolve(result);
-                  }
-                );
-              });
-              // console.log("itemUpdate=====", itemUpdate?.recurrence);
-              // console.log("oldRecurring=====", oldRecurring.frequency);
-              // console.log("result=====", result);
-
-              if (
-                itemUpdate?.recurrence ||
-                (oldRecurring.frequency && oldRecurring.frequency !== "none")
-              ) {
-                // update list event
-                const frequency = itemUpdate?.recurrence
-                  ? itemUpdate?.recurrence[0]
-                      ?.match(/FREQ=([^;]+)/)[1]
-                      ?.toLowerCase()
-                  : "none";
-                //  Lấy danh sách các event còn lại trong chuỗi
-                if (frequency === oldRecurring[0]?.frequency) {
-                  // khong thay doi recurring
-                  updateEvent(
-                    result[0]?.recurring_id,
-                    itemUpdate.start.dateTime,
-                    itemUpdate.end.dateTime,
-                    itemUpdate.summary,
-                    itemUpdate.description,
-                    itemUpdate.etag,
-                    result[0].id,
-                    itemUpdate
-                  );
-                } else {
-                  // thay doi recurring
-                  const listevents = await new Promise((resolve, reject) => {
-                    db.query(
-                      "SELECT * FROM event WHERE recurring_id = ? ORDER BY start_time ASC",
-                      [oldRecurring[0].id],
-                      (err, result) => {
-                        if (err) reject(err);
-                        else resolve(result);
-                      }
-                    );
-                  });
-                  const currentEvent = listevents.find(
-                    (event) => event.google_event_id === itemUpdate.id
-                  );
-                  await deleteOldEvents(oldRecurring[0]?.id);
-                  await updateRecurringEvent(frequency, oldRecurring[0]?.id);
-                  await insertNewEvents(
-                    listevents,
-                    itemUpdate,
-                    frequency,
-                    currentEvent.user_id,
-                    oldRecurring[0]?.id
-                  );
-                }
-              } else {
-                //update 1
-                db.query(
-                  "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE google_event_id = ?",
-                  [
-                    itemUpdate?.summary,
-                    itemUpdate.start.dateTime || new Date(),
-                    itemUpdate.end.dateTime || new Date(),
-                    itemUpdate.description || "",
-                    `${itemUpdate.etag}-1`,
-                    itemUpdate.id,
-                  ],
-                  (err, result) => {
-                    if (err) {
-                      console.error("Lỗi lưu sự kiện vào DB:", err);
-                      return;
+                  [newGoogleId],
+                  async (error, results) => {
+                    if (error) {
+                      return res.status(500).json({
+                        message: "lỗi khi lấy sự kiện",
+                        error: err,
+                      });
                     }
-
-                    const attendees = itemUpdate?.attendees || [];
-                    db.query(
-                      "DELETE FROM event_attendees WHERE event_id = ?",
-                      [findItemUpdateInDatabase?.id],
-                      (err) => {
-                        if (err) {
-                          return res.status(500).json({
-                            message: "Lỗi khi xoá attendees cũ trong database",
-                            error: err,
-                          });
-                        }
-                        if (attendees.length > 0) {
-                          const values = attendees.map((attendee) => [
-                            findItemUpdateInDatabase?.id,
-                            attendee?.email,
-                            attendee?.responseStatus,
-                          ]);
-                          db.query(
-                            "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
-                            [values],
-                            (err) => {
-                              if (err) {
-                                return res.status(500).json({
-                                  message: "Lỗi lưu danh sách người tham gia",
-                                  error: err,
-                                });
-                              }
-                              return res.status(200).json({
-                                message:
-                                  "Cập nhật thành công trên Google và database!",
-                              });
-                            }
-                          );
-                        } else {
+                   
+                    const itemUpdateDataBase = results.find(
+                      (item) => item.instance_id === event.id
+                    );
+                    if (itemUpdateDataBase) {
+                      db.query(
+                        "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE instance_id = ?",
+                        [
+                          event?.summary,
+                          event.start.dateTime || new Date(),
+                          event.end.dateTime || new Date(),
+                          event.description || "",
+                          `${event.etag}-1`,
+                          event.id,
+                        ],
+                        (err) => {
+                          if (err) {
+                            return res.status(500).json({
+                              message: "lỗi khi cập nhật sự kiện",
+                              error: err,
+                            });
+                          }
                           return res.status(200).json({
                             message:
                               "Cập nhật thành công trên Google và database!",
                           });
                         }
-                      }
-                    );
+                      );
+                    } else {
+                      const instanceToUpdate = results.find((item) => {
+                        const eventStart = new Date(startTime).getTime();
+                        const dbStart = new Date(item.start_time).getTime();
+                        return eventStart === dbStart;
+                      });
+                      await handleUpdateEvent(
+                        instanceToUpdate?.google_event_id,
+                        instanceToUpdate.id,
+                        event,
+                        event.id
+                      );
+                      return res.status(200).json({
+                        message: "Cập nhật thành công trên Google và database!",
+                      });
+                    }
                   }
                 );
+              } else {
+                const itemUpdate = filterfetchedEvent[0];
+                const result = await new Promise((resolve, reject) => {
+                  db.query(
+                    "SELECT * FROM event WHERE google_event_id = ?",
+                    [itemUpdate?.id],
+                    (err, result) => {
+                      if (err) return reject(err);
+                      resolve(result);
+                    }
+                  );
+                });
+                const oldRecurring = await new Promise((resolve, reject) => {
+                  db.query(
+                    "SELECT * FROM recurring_events WHERE id = ?",
+                    [result[0]?.recurring_id],
+                    (err, result) => {
+                      if (err) return reject(err);
+                      resolve(result);
+                    }
+                  );
+                });
+                if (
+                  itemUpdate?.recurrence ||
+                  (oldRecurring[0].frequency &&
+                    oldRecurring[0].frequency !== "none")
+                ) {
+                  // update list event
+                  const frequency = itemUpdate?.recurrence
+                    ? itemUpdate?.recurrence[0]
+                        ?.match(/FREQ=([^;]+)/)[1]
+                        ?.toLowerCase()
+                    : "none";
+                  //  Lấy danh sách các event còn lại trong chuỗi
+                  if (frequency === oldRecurring[0]?.frequency) {
+                    // khong thay doi recurring
+                    updateEvent(
+                      result[0]?.recurring_id,
+                      itemUpdate.start.dateTime,
+                      itemUpdate.end.dateTime,
+                      itemUpdate.summary,
+                      itemUpdate.description,
+                      itemUpdate.etag,
+                      result[0].id,
+                      itemUpdate
+                    );
+                  } else {
+                    // thay doi recurring
+                    const listevents = await new Promise((resolve, reject) => {
+                      db.query(
+                        "SELECT * FROM event WHERE recurring_id = ? ORDER BY start_time ASC",
+                        [oldRecurring[0].id],
+                        (err, result) => {
+                          if (err) reject(err);
+                          else resolve(result);
+                        }
+                      );
+                    });
+                    const currentEvent = listevents.find(
+                      (event) => event.google_event_id === itemUpdate.id
+                    );
+
+                    await deleteOldEvents(oldRecurring[0]?.id);
+                    await updateRecurringEvent(frequency, oldRecurring[0]?.id);
+                    await insertNewEvents(
+                      listevents,
+                      itemUpdate,
+                      frequency,
+                      currentEvent.user_id,
+                      oldRecurring[0]?.id
+                    );
+                  }
+                } else {
+                  //update 1
+                  db.query(
+                    "UPDATE event SET title=?, start_time=?, end_time=?, description=?, last_resource_id=? WHERE google_event_id = ?",
+                    [
+                      itemUpdate?.summary,
+                      itemUpdate.start.dateTime || new Date(),
+                      itemUpdate.end.dateTime || new Date(),
+                      itemUpdate.description || "",
+                      `${itemUpdate.etag}-1`,
+                      itemUpdate.id,
+                    ],
+                    (err, result) => {
+                      if (err) {
+                        console.error("Lỗi lưu sự kiện vào DB:", err);
+                        return;
+                      }
+
+                      const attendees = itemUpdate?.attendees || [];
+                      db.query(
+                        "DELETE FROM event_attendees WHERE event_id = ?",
+                        [findItemUpdateInDatabase?.id],
+                        (err) => {
+                          if (err) {
+                            return res.status(500).json({
+                              message:
+                                "Lỗi khi xoá attendees cũ trong database",
+                              error: err,
+                            });
+                          }
+                          if (attendees.length > 0) {
+                            const values = attendees.map((attendee) => [
+                              findItemUpdateInDatabase?.id,
+                              attendee?.email,
+                              attendee?.responseStatus,
+                            ]);
+                            db.query(
+                              "INSERT INTO event_attendees (event_id, email, response_status) VALUES ?",
+                              [values],
+                              (err) => {
+                                if (err) {
+                                  return res.status(500).json({
+                                    message: "Lỗi lưu danh sách người tham gia",
+                                    error: err,
+                                  });
+                                }
+                                return res.status(200).json({
+                                  message:
+                                    "Cập nhật thành công trên Google và database!",
+                                });
+                              }
+                            );
+                          } else {
+                            return res.status(200).json({
+                              message:
+                                "Cập nhật thành công trên Google và database!",
+                            });
+                          }
+                        }
+                      );
+                    }
+                  );
+                }
               }
             }
           }
