@@ -1,8 +1,7 @@
 import { db } from "./../../index.js";
 import { google } from "googleapis";
 import { oauth2Client } from "./google.controller.js";
-import { getRecurrenceRule } from "../../common/index.js";
-
+import { getRecurrenceRule, formatDateOnly } from "../../common/index.js";
 export const addEvent = async (req, res) => {
   const {
     user_id,
@@ -513,8 +512,8 @@ export const listEventByUser = (req, res) => {
               title: row.title,
               status: row.status,
               description: row.description,
-              start_time: row.start_time,
-              end_time: row.end_time,
+              start_time: formatDateOnly(row.start_time),
+              end_time: formatDateOnly(row.end_time),
               recurring_id: row.recurring_id,
               can_edit: Number(row.owner_id) === Number(user_id),
               meet_link: row.meet_link,

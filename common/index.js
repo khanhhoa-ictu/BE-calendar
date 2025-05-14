@@ -1,8 +1,8 @@
 import moment from "moment";
 
 export const role = {
-  USER: '1',
-  ADMIN: '2',
+  USER: "1",
+  ADMIN: "2",
 };
 export const getGoogleUserInfo = async (accessToken) => {
   try {
@@ -24,8 +24,24 @@ export const getRecurrenceRule = (frequency) => {
   return rule;
 };
 
-export const convertTime = (dateTime) => {
-  const hour = moment(dateTime).hour(); 
-  const minute = moment(dateTime).minute(); 
-  return { hour, minute };
+export const formatDateOnly = (datetime) => {
+  const m = moment(datetime);
+
+  // Nếu giờ và phút đều là 0 thì chỉ trả ngày
+  if (m.hour() === 0 && m.minute() === 0) {
+    return m.format("YYYY-MM-DD");
+  }
+
+  // Nếu có giờ hoặc phút thì trả cả ngày và giờ
+  return m.format("YYYY-MM-DD HH:mm");
 };
+
+export const  isOnlyOneInstanceUpdated = (masterEvent, instanceEvent) => {
+  const isTitleDifferent = masterEvent.title === instanceEvent.summary;
+  const isDescDifferent = (masterEvent?.description || "") === (instanceEvent?.description || "");
+  const isStartDifferent = new Date(masterEvent.start_time).getTime() === new Date(instanceEvent.start.dateTime).getTime();
+  const isEndDifferent = new Date(masterEvent.end_time).getTime() === new Date(instanceEvent.end.dateTime).getTime();
+
+
+  return isTitleDifferent && isDescDifferent && isStartDifferent && isEndDifferent;
+}
