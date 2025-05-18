@@ -221,7 +221,6 @@ export const checkSyncCalendar = (req, res) => {
           .json({ message: "dữ liệu chưa được đồng bộ hết", data: result });
       }
       if (err) {
-        console.log(err);
         res.status(500).json({ message: "Lỗi không tìm thấy dữ liệu" });
       }
     }
@@ -544,8 +543,7 @@ export const webhookGoogle = async (req, res) => {
                 listIdUpdate.includes(item?.google_event_id) ||
                 listIdUpdate.includes(item?.instance_id)
             );
-            console.log("envet===", findItemUpdateInDatabase);
-            console.log("existingEvents===", updateEventEtagId);
+
 
             if (newEventIds.length > 0) {
               let allEvents = [];
@@ -731,10 +729,8 @@ export const webhookGoogle = async (req, res) => {
                         );
                       } else {
                         // add 1 event
-                        // console.log("event====",event);
 
                         if (event.recurringEventId) {
-                          // console.log('zoooo ne')
                           return resolve();
                         } else {
                           db.query(
@@ -884,7 +880,6 @@ export const webhookGoogle = async (req, res) => {
 
             //update
             if (updateEventEtagId.length > 0 && findItemUpdateInDatabase) {
-              console.log("vao up date");
               const isUpdateOneItem = isOnlyOneInstanceUpdated(
                 findItemUpdateInDatabase,
                 filterfetchedEvent[0]
@@ -893,7 +888,6 @@ export const webhookGoogle = async (req, res) => {
                 (filterfetchedEvent.length > 1 && isUpdateOneItem) ||
                 filterfetchedEvent[0].recurringEventId
               ) {
-                console.log("vao day la sao");
 
                 const event = filterfetchedEvent[filterfetchedEvent.length - 1];
                 const startTime = event?.originalStartTime?.dateTime;
@@ -958,7 +952,6 @@ export const webhookGoogle = async (req, res) => {
                   }
                 );
               } else {
-                console.log("phai vao day");
                 const itemUpdate = filterfetchedEvent[0];
                 const result = await new Promise((resolve, reject) => {
                   db.query(
